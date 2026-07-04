@@ -64,14 +64,6 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .nav-item.current-group{background:transparent;color:var(--txt);border-left:3px solid var(--brand2);padding-left:9px}
 .nav-item .ic{width:18px;text-align:center}
 .nav-sub{padding-left:34px;font-size:13px;font-weight:500}
-/* Toggle switch — replaces native checkboxes in permission matrices */
-.tgl{position:relative;display:inline-block;width:38px;height:22px;vertical-align:middle}
-.tgl input{opacity:0;width:0;height:0;position:absolute}
-.tgl .slider{position:absolute;inset:0;background:var(--panel2);border:1px solid var(--line);border-radius:22px;cursor:pointer;transition:.15s}
-.tgl .slider:before{content:"";position:absolute;height:16px;width:16px;left:2px;top:2px;background:#93a1bd;border-radius:50%;transition:.15s}
-.tgl input:checked+.slider{background:rgba(227,6,19,.18);border-color:var(--brand)}
-.tgl input:checked+.slider:before{transform:translateX(16px);background:var(--brand)}
-.tgl input:disabled+.slider{opacity:.4;cursor:default}
 .nav-sec{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#5c6c8c;margin:14px 8px 6px}
 .profile-grid{display:grid;grid-template-columns:1fr 260px;gap:20px;align-items:start}
 .main{padding:20px 26px;overflow:auto;height:100vh}
@@ -323,7 +315,7 @@ const NAVDEF = {
   payroll:{t:"Payroll",ic:"₳",subs:[{key:"run",t:"Payroll Run"},{key:"ledger",t:"Employee Ledger"}]},
   accounting:{t:"Accounting",ic:"₿",subs:[{key:"pl",t:"P&L & VAT"},{key:"coa",t:"Chart of Accounts"},{key:"cheques",t:"Cheques"}]},
   ai:{t:"AI Reports",ic:"✦"},
-  admin:{t:"Admin / Settings",ic:"⚙",subs:[{key:"roles",t:"Roles & Permissions"},{key:"people",t:"People"},{key:"users",t:"Users"},{key:"products",t:"Products & Segments"}]}
+  admin:{t:"Admin / Settings",ic:"⚙",subs:[{key:"permissions",t:"Permissions"},{key:"users",t:"Users"},{key:"products",t:"Products & Segments"}]}
 };
 
 /* ---------- Seed data ---------- */
@@ -527,7 +519,7 @@ let SESSION=null;
 let CURRENT="dash";
 let HR_SUB="all";
 let EMP_PAGE=null;
-let ADMIN_SUB="roles";
+let ADMIN_SUB="permissions";
 let ADMIN_PICK=null;
 let DSR_PAGE=null;
 let DEAL_PAGE=null;
@@ -644,7 +636,6 @@ function statusColor(s){
   return "var(--blue)";
 }
 const tag=s=>`<span class="tag" style="background:${statusColor(s)}22;color:${statusColor(s)}">${s}</span>`;
-const tgl=(checked,disabled,onchangeAttr)=>`<label class="tgl"><input type="checkbox" ${checked?'checked':''} ${disabled?'disabled':''} onchange="${onchangeAttr}"><span class="slider"></span></label>`;
 
 /* ---------- Login (per-employee username + password) ---------- */
 function defUser(name){ return String(name).toLowerCase().replace(/[^a-z0-9]/g,""); }
@@ -777,24 +768,45 @@ function grantViewIfMissing(viewArr,key){
   if(key.includes('.') && viewArr.includes(key.split('.')[0])) return;
   viewArr.push(key);
 }
-function toggleUserAccess(empId,mod,on){
+// ---- Unified 3-state permission mutation (none | view | edit) ----
+// A row is either a bare module key ("hr") or a compound subsection key ("hr.passport").
+// Setting a bare key wipes any subsection-specific overrides under it (clean "whole module" grant).
+// Setting a compound key first expands a bare grant into explicit per-sibling keys, so narrowing
+// one subsection never silently changes the others.
+function clearModuleAndSubs(list,mod){
+  for(let i=list.length-1;i>=0;i--){ if(list[i]===mod||list[i].startsWith(mod+'.')) list.splice(i,1); }
+}
+function expandBareToSubs(list,mod){
+  const i=list.indexOf(mod); if(i<0) return;
+  list.splice(i,1);
+  (NAVDEF[mod].subs||[]).forEach(s=>{ const k=mod+'.'+s.key; if(!list.includes(k)) list.push(k); });
+}
+function applyPerm(viewArr,editArr,key,level){
+  const mod=key.split('.')[0], isSub=key.includes('.');
+  if(isSub){ expandBareToSubs(viewArr,mod); expandBareToSubs(editArr,mod); }
+  else { clearModuleAndSubs(viewArr,mod); clearModuleAndSubs(editArr,mod); }
+  [viewArr,editArr].forEach(a=>{ const i=a.indexOf(key); if(i>=0) a.splice(i,1); });
+  if(level==="view") viewArr.push(key);
+  else if(level==="edit"){ editArr.push(key); grantViewIfMissing(viewArr,key); }
+}
+function permLevel(viewList,editList,key){
+  if(editList.includes(key)||(key.includes('.')&&editList.includes(key.split('.')[0]))) return "edit";
+  if(viewList.includes(key)||(key.includes('.')&&viewList.includes(key.split('.')[0]))) return "view";
+  return "none";
+}
+function moduleIsCustomized(list,mod){ return list.some(k=>k.startsWith(mod+'.')); }
+function setRolePerm(role,key,level){
+  const va=DB.access[role]||(DB.access[role]=[]), ea=DB.editAccess[role]||(DB.editAccess[role]=[]);
+  applyPerm(va,ea,key,level);
+  save(); if(role===SESSION.role) renderNav(); render();
+}
+function setUserPerm(empId,key,level){
   const e=DB.employees.find(x=>x.id===empId); if(!e) return;
   if(DB.userAccess[empId]===undefined) DB.userAccess[empId]=JSON.parse(JSON.stringify(DB.access[e.role]||[]));
-  const a=DB.userAccess[empId]; const i=a.indexOf(mod);
-  if(on&&i<0)a.push(mod); if(!on&&i>=0)a.splice(i,1);
+  if(DB.userEditAccess[empId]===undefined) DB.userEditAccess[empId]=JSON.parse(JSON.stringify(DB.editAccess[e.role]||[]));
+  applyPerm(DB.userAccess[empId],DB.userEditAccess[empId],key,level);
   save(); if(sessionEmp()&&sessionEmp().id===empId) renderNav();
   render();
-}
-function toggleUserEdit(empId,mod,on){
-  const e=DB.employees.find(x=>x.id===empId); if(!e) return;
-  if(DB.userEditAccess[empId]===undefined) DB.userEditAccess[empId]=JSON.parse(JSON.stringify(DB.editAccess[e.role]||[]));
-  const a=DB.userEditAccess[empId]; const i=a.indexOf(mod);
-  if(on&&i<0)a.push(mod); if(!on&&i>=0)a.splice(i,1);
-  if(on){
-    if(DB.userAccess[empId]===undefined) DB.userAccess[empId]=JSON.parse(JSON.stringify(DB.access[e.role]||[]));
-    grantViewIfMissing(DB.userAccess[empId],mod);
-  }
-  save(); render();
 }
 function resetUserOverride(empId){
   delete DB.userAccess[empId]; delete DB.userEditAccess[empId];
@@ -2174,78 +2186,84 @@ function aiReport(period){
 /* ============================================================
    ADMIN / SETTINGS (extensibility)
    ============================================================ */
-function allSubKeys(){
-  const out=[];
-  Object.keys(NAVDEF).forEach(m=>{ (NAVDEF[m].subs||[]).forEach(s=>out.push({key:m+'.'+s.key,mod:m,sub:s.key,label:NAVDEF[m].t+' ▸ '+s.t})); });
-  return out;
+// ---- Unified permissions screen: same UI for a Role or a specific Person ----
+let PERM_SCOPE="role", PERM_ROLE="", PERM_OPEN={};
+function permSetScope(s){ PERM_SCOPE=s; render(); }
+function permSetRole(r){ PERM_ROLE=r; render(); }
+function permToggleOpen(m){ PERM_OPEN[m]=!PERM_OPEN[m]; render(); }
+function segControl(level,mod,sub,setter,targetArg){
+  const key=sub?mod+'.'+sub:mod;
+  return `<div class="seg">${[["none","None"],["view","View"],["edit","Edit"]].map(([lv,label])=>
+    `<button type="button" class="${level===lv?'on':''}" onclick="${setter}('${targetArg}','${key}','${lv}')">${label}</button>`).join("")}</div>`;
 }
-function viewAdminRoles(){
-  const editable=canEditSub('admin','roles');
-  const roles=Object.keys(ROLES);
-  const mods=Object.keys(NAVDEF);
-  let head=`<tr><th>Role \\ Module</th>${mods.map(m=>`<th style="text-transform:none">${NAVDEF[m].t}</th>`).join("")}</tr>`;
-  let rows=roles.map(r=>`<tr><td><b>${ROLES[r].name}</b></td>${mods.map(m=>{
-      const on=(DB.access[r]||[]).includes(m);
-      return `<td style="text-align:center">${tgl(on,!editable,`toggleAccess('${r}','${m}',this.checked)`)}</td>`;
-    }).join("")}</tr>`).join("");
-  let ehead=`<tr><th>Role \\ Module</th>${EDIT_MODS.map(m=>`<th style="text-transform:none">${NAVDEF[m].t}</th>`).join("")}</tr>`;
-  let erows=roles.map(r=>`<tr><td><b>${ROLES[r].name}</b></td>${EDIT_MODS.map(m=>{
-      const on=(DB.editAccess[r]||[]).includes(m);
-      return `<td style="text-align:center">${tgl(on,!editable,`toggleEdit('${r}','${m}',this.checked)`)}</td>`;
-    }).join("")}</tr>`).join("");
-  const subs=allSubKeys();
-  const shead=`<tr><th>Role \\ Subsection</th>${subs.map(s=>`<th style="text-transform:none">${s.label}</th>`).join("")}</tr>`;
-  const srows=roles.map(r=>`<tr><td><b>${ROLES[r].name}</b></td>${subs.map(s=>{
-      const on=subGranted(DB.access[r]||[],s.mod,s.sub);
-      return `<td style="text-align:center">${tgl(on,!editable,`toggleAccess('${r}','${s.key}',this.checked)`)}</td>`;
-    }).join("")}</tr>`).join("");
-  const serows=roles.map(r=>`<tr><td><b>${ROLES[r].name}</b></td>${subs.map(s=>{
-      const on=subGranted(DB.editAccess[r]||[],s.mod,s.sub);
-      return `<td style="text-align:center">${tgl(on,!editable,`toggleEdit('${r}','${s.key}',this.checked)`)}</td>`;
-    }).join("")}</tr>`).join("");
-  return `<div class="card"><h3>View Access by Role ${editable?'<span class="badge">EDITABLE</span>':''}</h3>
-      <div class="scroll" style="max-height:none"><table>${head}${rows}</table></div>
-      <p class="muted" style="font-size:12px;margin-top:8px">Controls what each role can <b>see</b> in the sidebar — this is the default for everyone in that role. To customize one specific person, use <b>People</b>.</p></div>
-    <div class="card"><h3>Edit/Create Access by Role ${editable?'<span class="badge">EDITABLE</span>':''}</h3>
-      <div class="scroll" style="max-height:none"><table>${ehead}${erows}</table></div>
-      <p class="muted" style="font-size:12px;margin-top:8px">Controls what each role can <b>change</b> — independent of View access above.</p></div>
-    <div class="card"><h3>Subsection View Access by Role ${editable?'<span class="badge">EDITABLE</span>':''}</h3>
-      <div class="scroll" style="max-height:none"><table>${shead}${srows}</table></div>
-      <p class="muted" style="font-size:12px;margin-top:8px">Narrows a role down to specific subsections instead of the whole module above (e.g. Accounting ▸ Cheques only, without P&amp;L or Chart of Accounts).</p></div>
-    <div class="card"><h3>Subsection Edit/Create Access by Role ${editable?'<span class="badge">EDITABLE</span>':''}</h3>
-      <div class="scroll" style="max-height:none"><table>${shead}${serows}</table></div>
-      <p class="muted" style="font-size:12px;margin-top:8px">Granting Edit here also grants View for that same subsection automatically.</p></div>`;
-}
-function viewAdminPeople(){
-  const editable=canEditSub('admin','people');
-  const options=DB.employees.map(e=>`<option value="${e.id}" ${ADMIN_PICK===e.id?'selected':''}>${e.name} — ${ROLES[e.role].name}</option>`).join("");
-  const picker=`<div class="card"><h3>People</h3>
-    <label>Search / select a person</label><select onchange="ADMIN_PICK=this.value;render();"><option value="">— choose a person —</option>${options}</select></div>`;
-  if(!ADMIN_PICK) return picker+`<p class="muted" style="padding:0 4px">Pick a person above to view or override their individual View/Edit permissions.</p>`;
-  const e=DB.employees.find(x=>x.id===ADMIN_PICK);
-  if(!e){ ADMIN_PICK=null; return picker; }
-  const overridden=DB.userAccess[e.id]!==undefined||DB.userEditAccess[e.id]!==undefined;
-  const viewList=DB.userAccess[e.id]!==undefined?DB.userAccess[e.id]:(DB.access[e.role]||[]);
-  const editList=DB.userEditAccess[e.id]!==undefined?DB.userEditAccess[e.id]:(DB.editAccess[e.role]||[]);
-  const rows=[];
+function levelLabel(lv){ return lv==="edit"?"Can Edit":lv==="view"?"Can View":"No Access"; }
+function viewAdminPermissionList(viewList,editList,editable,setter,targetArg){
+  let rows="";
   Object.keys(NAVDEF).forEach(m=>{
-    const d=NAVDEF[m]; const hasEdit=EDIT_MODS.includes(m);
-    rows.push(`<tr><td>${d.t}</td>
-      <td style="text-align:center">${tgl(moduleGranted(viewList,m),!editable,`toggleUserAccess('${e.id}','${m}',this.checked)`)}</td>
-      <td style="text-align:center">${hasEdit?tgl(moduleGranted(editList,m),!editable,`toggleUserEdit('${e.id}','${m}',this.checked)`):'<span class="muted">—</span>'}</td>
-    </tr>`);
-    (d.subs||[]).forEach(s=>{
-      const key=m+'.'+s.key;
-      rows.push(`<tr><td class="muted" style="padding-left:26px">↳ ${s.t}</td>
-        <td style="text-align:center">${tgl(subGranted(viewList,m,s.key),!editable,`toggleUserAccess('${e.id}','${key}',this.checked)`)}</td>
-        <td style="text-align:center">${tgl(subGranted(editList,m,s.key),!editable,`toggleUserEdit('${e.id}','${key}',this.checked)`)}</td>
-      </tr>`);
-    });
+    const d=NAVDEF[m];
+    const customized=!!d.subs&&(moduleIsCustomized(viewList,m)||moduleIsCustomized(editList,m));
+    const open=!!PERM_OPEN[m]||customized;
+    const lvl=permLevel(viewList,editList,m);
+    rows+=`<tr><td>${d.subs?`<span style="cursor:pointer" onclick="permToggleOpen('${m}')">${open?'▾':'▸'}</span> `:''}${d.t}</td>
+      <td>${customized?'<span class="muted" style="font-size:12px">Customized — set per subsection below</span>':(editable?segControl(lvl,m,null,setter,targetArg):`<span class="muted">${levelLabel(lvl)}</span>`)}</td></tr>`;
+    if(d.subs&&open){
+      d.subs.forEach(s=>{
+        const slvl=permLevel(viewList,editList,m+'.'+s.key);
+        rows+=`<tr><td class="muted" style="padding-left:26px">↳ ${s.t}</td>
+          <td>${editable?segControl(slvl,m,s.key,setter,targetArg):`<span class="muted">${levelLabel(slvl)}</span>`}</td></tr>`;
+      });
+    }
   });
-  return picker+`<div class="card"><h3>${e.name} <span class="muted" style="font-weight:400">(${ROLES[e.role].name})</span> ${overridden?'<span class="badge" style="background:var(--amber)">CUSTOM OVERRIDE</span>':'<span class="badge">ROLE DEFAULT</span>'}</h3>
-    <p class="muted" style="font-size:12px;margin-top:0">Toggling any switch below gives ${e.name} their own independent permissions, separate from every other ${ROLES[e.role].name}. Indented rows are subsections within the module above them.</p>
-    ${editable&&overridden?`<button class="btn-ghost" onclick="resetUserOverride('${e.id}')" style="margin-bottom:10px">↺ Reset to role default</button>`:''}
-    <table><tr><th>Module</th><th>View</th><th>Edit/Create</th></tr>${rows.join("")}</table></div>`;
+  return `<table><tr><th>Module</th><th>Access</th></tr>${rows}</table>`;
+}
+function renderNavPreview(viewList){
+  const mods=Object.keys(NAVDEF).filter(k=>moduleGranted(viewList,k));
+  if(!mods.length) return '<p class="muted" style="font-size:12px;padding:8px 0">This role/person would see an empty sidebar.</p>';
+  return mods.map(k=>{
+    const d=NAVDEF[k];
+    let html=`<div class="nav-item" style="cursor:default"><span class="ic">${d.ic}</span> ${d.t}</div>`;
+    if(d.subs) html+=visibleSubs(viewList,k,d).map(s=>`<div class="nav-item nav-sub" style="cursor:default">${s.t}</div>`).join("");
+    return html;
+  }).join("");
+}
+function viewAdminPermissions(){
+  const editable=canEditSub('admin','permissions');
+  if(!PERM_ROLE) PERM_ROLE=Object.keys(ROLES)[0];
+  const scopeBtns=`<div class="seg">
+      <button type="button" class="${PERM_SCOPE==='role'?'on':''}" onclick="permSetScope('role')">Role</button>
+      <button type="button" class="${PERM_SCOPE==='person'?'on':''}" onclick="permSetScope('person')">Person</button>
+    </div>`;
+  let targetPicker,viewList,editList,setter,targetArg,extraCard="";
+  if(PERM_SCOPE==="role"){
+    targetPicker=`<select onchange="permSetRole(this.value)">${Object.keys(ROLES).map(r=>`<option value="${r}" ${r===PERM_ROLE?'selected':''}>${ROLES[r].name}</option>`).join("")}</select>`;
+    viewList=DB.access[PERM_ROLE]||[]; editList=DB.editAccess[PERM_ROLE]||[];
+    setter="setRolePerm"; targetArg=PERM_ROLE;
+  } else {
+    const options=DB.employees.map(e=>`<option value="${e.id}" ${ADMIN_PICK===e.id?'selected':''}>${e.name} — ${ROLES[e.role].name}</option>`).join("");
+    targetPicker=`<select onchange="ADMIN_PICK=this.value;render();"><option value="">— choose a person —</option>${options}</select>`;
+    if(!ADMIN_PICK){
+      return `<div class="card"><h3>Permissions ${editable?'<span class="badge">EDITABLE</span>':''}</h3>
+        <p class="muted" style="font-size:12px;margin-top:0">Pick a role to set the default for everyone in it, or a specific person to override just them. "Edit" always includes "View".</p>
+        <div class="row"><div>${scopeBtns}</div><div>${targetPicker}</div></div>
+        <p class="muted" style="margin-top:10px">Pick a person above to view or override their individual permissions.</p></div>`;
+    }
+    const e=DB.employees.find(x=>x.id===ADMIN_PICK);
+    if(!e){ ADMIN_PICK=null; return viewAdminPermissions(); }
+    const overridden=DB.userAccess[e.id]!==undefined||DB.userEditAccess[e.id]!==undefined;
+    viewList=DB.userAccess[e.id]!==undefined?DB.userAccess[e.id]:(DB.access[e.role]||[]);
+    editList=DB.userEditAccess[e.id]!==undefined?DB.userEditAccess[e.id]:(DB.editAccess[e.role]||[]);
+    setter="setUserPerm"; targetArg=e.id;
+    extraCard=`${overridden?'<span class="badge" style="background:var(--amber)">CUSTOM OVERRIDE</span>':'<span class="badge">ROLE DEFAULT</span>'}${editable&&overridden?` <button class="btn-ghost" onclick="resetUserOverride('${e.id}')">↺ Reset to role default</button>`:''}`;
+  }
+  return `<div class="card"><h3>Permissions ${editable?'<span class="badge">EDITABLE</span>':''}</h3>
+      <p class="muted" style="font-size:12px;margin-top:0">Pick a role to set the default for everyone in it, or a specific person to override just them. "Edit" always includes "View".</p>
+      <div class="row"><div>${scopeBtns}</div><div>${targetPicker}</div></div>
+      ${extraCard?`<div style="margin-top:10px">${extraCard}</div>`:''}
+    </div>
+    <div class="profile-grid" style="margin-top:14px">
+      <div class="card">${viewAdminPermissionList(viewList,editList,editable,setter,targetArg)}</div>
+      <div class="card"><h3>Sidebar Preview</h3>${renderNavPreview(viewList)}</div>
+    </div>`;
 }
 function viewAdminUsers(){
   const editable=canEditSub('admin','users');
@@ -2270,21 +2288,9 @@ function viewAdminProducts(){
     </div>`;
 }
 function viewAdmin(){
-  if(ADMIN_SUB==="people") return viewAdminPeople();
   if(ADMIN_SUB==="users") return viewAdminUsers();
   if(ADMIN_SUB==="products") return viewAdminProducts();
-  return viewAdminRoles();
-}
-function toggleAccess(role,mod,on){
-  const a=DB.access[role]||(DB.access[role]=[]); const i=a.indexOf(mod);
-  if(on&&i<0)a.push(mod); if(!on&&i>=0)a.splice(i,1);
-  save(); if(role===SESSION.role) renderNav(); render();
-}
-function toggleEdit(role,mod,on){
-  const a=DB.editAccess[role]||(DB.editAccess[role]=[]); const i=a.indexOf(mod);
-  if(on&&i<0)a.push(mod); if(!on&&i>=0)a.splice(i,1);
-  if(on) grantViewIfMissing(DB.access[role]||(DB.access[role]=[]),mod);
-  save(); render();
+  return viewAdminPermissions();
 }
 // Shared password-change modal — the current password is never read back or displayed,
 // only ever overwritten. Used from Admin > Users and from the Employee Profile page.
