@@ -30,7 +30,7 @@ th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);white
 th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;position:sticky;top:0;background:var(--panel)}
 tr:hover td{background:rgba(255,255,255,.02)}
 .tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700}
-.scroll{overflow:auto;max-height:62vh;border:1px solid var(--line);border-radius:var(--radius)}
+.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius)}
 
 /* Login */
 #login{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(1200px 600px at 70% -10%,#26344f,#0f1623)}
@@ -72,6 +72,8 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .topbar h1{font-size:20px;margin:0}
 .who{display:flex;align-items:center;gap:10px}
 .avatar{width:34px;height:34px;border-radius:50%;background:var(--role,var(--brand));display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px}
+.acctbtn{display:flex;align-items:center;gap:10px;cursor:pointer;padding:5px 8px;border-radius:9px}
+.acctbtn:hover{background:var(--panel2)}
 
 /* Cards / KPIs */
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:18px}
@@ -200,7 +202,6 @@ input.colf::placeholder{color:#5c6c8c}
       <div class="nav-item" onclick="openDemoGuide()"><span class="ic">?</span> Demo walkthrough</div>
       <div class="nav-item" onclick="openScenarioMenu()"><span class="ic">*</span> Demo scenarios</div>
       <div class="nav-item" onclick="resetDemo()"><span class="ic">↺</span> Reset demo data</div>
-      <div class="nav-item" onclick="logout()"><span class="ic">⎋</span> Switch role / Logout</div>
     </div>
   </aside>
   <main class="main">
@@ -208,8 +209,11 @@ input.colf::placeholder{color:#5c6c8c}
       <div style="display:flex;align-items:center;gap:16px"><button class="hamburger" onclick="toggleSidebar()" title="Toggle menu">☰</button><h1 id="pageTitle">Dashboard</h1><div id="agentFilter"></div></div>
       <div class="who">
         <button class="bell" onclick="toggleNotif(event)" title="Notifications">🔔<span id="bellCount" class="bellbadge hidden">0</span></button>
-        <div class="right" style="cursor:pointer" onclick="myProfileModal()" title="My Profile"><div id="whoName" style="font-weight:700"></div><div class="muted" id="whoRole" style="font-size:12px"></div></div>
-        <div class="avatar" id="whoAv" style="cursor:pointer" onclick="myProfileModal()" title="My Profile">A</div>
+        <div class="acctbtn" onclick="toggleAccountMenu(event)" title="Account">
+          <div class="right"><div id="whoName" style="font-weight:700"></div><div class="muted" id="whoRole" style="font-size:12px"></div></div>
+          <div class="avatar" id="whoAv">A</div>
+          <span class="muted" style="font-size:10px">▾</span>
+        </div>
       </div>
     </div>
     <div class="demobar">⚠ DEMO — sample data only. Your changes are saved in your own browser and are not shared with others. Use “Reset demo data” anytime.</div>
@@ -311,7 +315,7 @@ const NAVDEF = {
   dash:{t:"Dashboard",ic:"▣"}, dsr:{t:"DSR — Agent",ic:"☎"},
   pipeline:{t:"Sales Pipeline",ic:"⚲"}, backoffice:{t:"Back Office / Orders",ic:"☑"},
   mis:{t:"MIS & Targets",ic:"▦"},
-  hr:{t:"HR",ic:"❖",subs:[{key:"all",t:"All Employees"},{key:"active",t:"Active Employees"},{key:"passport",t:"Passport Management"}]},
+  hr:{t:"HR",ic:"❖",subs:[{key:"all",t:"All Employees"},{key:"active",t:"Active Employees"},{key:"team",t:"Team Assignment"},{key:"passport",t:"Passport Management"}]},
   payroll:{t:"Payroll",ic:"₳",subs:[{key:"run",t:"Payroll Run"},{key:"ledger",t:"Employee Ledger"}]},
   accounting:{t:"Accounting",ic:"₿",subs:[{key:"pl",t:"P&L & VAT"},{key:"coa",t:"Chart of Accounts"},{key:"cheques",t:"Cheques"}]},
   ai:{t:"AI Reports",ic:"✦"},
@@ -578,6 +582,18 @@ function toggleNotif(ev){
       </div>${body}</div>`;
   // opening marks them read
   list.forEach(n=>n.read=true); save(); renderBell();
+}
+function toggleAccountMenu(ev){
+  if(ev) ev.stopPropagation();
+  if(!SESSION) return;
+  document.getElementById("menuHost").innerHTML=`<div class="menubackdrop" onclick="closeMenu()"></div>
+    <div class="menucard" style="right:24px;top:62px">
+      <div style="padding:9px 11px;border-bottom:1px solid var(--line);margin-bottom:6px">
+        <div style="font-weight:700">${SESSION.name}</div><div class="muted" style="font-size:12px">${ROLES[SESSION.role].name}</div>
+      </div>
+      <button class="mi" onclick="closeMenu();myProfileModal()">👤 My Profile</button>
+      <button class="mi" onclick="closeMenu();logout()">⎋ Logout</button>
+    </div>`;
 }
 function markAllRead(){ myNotifs().forEach(n=>n.read=true); save(); renderBell(); closeMenu(); }
 function notifClick(id){
@@ -1537,7 +1553,7 @@ function viewMIS(){
 
   const misCols=["Agent","TL","Target","Submitted","Activated","Ach%","Pending MRC","Commission"];
   return `<div class="toolbar"><button class="btn-ghost" onclick="exportMIS()">Export MIS CSV</button></div><div class="card"><h3>Sales MIS — Target vs Submission vs Activation</h3>
-    <div class="scroll" style="max-height:46vh"><table><tr>${misCols.map(c=>`<th>${c}</th>`).join("")}</tr>${colFilterRow(misCols)}${body}</table></div></div>
+    <div class="scroll"><table><tr>${misCols.map(c=>`<th>${c}</th>`).join("")}</tr>${colFilterRow(misCols)}${body}</table></div></div>
     <div class="grid2">
       <div class="card"><h3>Order Status Breakdown</h3><table><tr><th>Status</th><th>Count</th><th>MRC</th></tr>${sb}</table></div>
       <div class="card"><h3>Team Leader Roll-up</h3>${tlRollup()}</div>
@@ -1595,6 +1611,7 @@ function viewHR(){
   if(EMP_PAGE) return viewEmployeeProfile(EMP_PAGE);
   if(HR_SUB==="active") return viewHRList(DB.employees.filter(e=>e.active!==false),"Active Employees — currently employed staff only");
   if(HR_SUB==="passport") return viewHRPassport();
+  if(HR_SUB==="team") return viewHRTeamAssignment();
   return viewHRList(DB.employees,"All Employees — full roster, including inactive");
 }
 function hrRow(e){
@@ -1620,7 +1637,6 @@ function viewHRList(list,subtitle){
       ${kpi("Departments",[...new Set(DB.employees.map(e=>e.dept))].length,"var(--purple)","")}
       ${kpi("Compliance Flags",flagged,flagged?"var(--brand2)":"var(--green)","Missing / expiring / expired docs")}
     </div>
-    ${assignCard()}
     ${(()=>{const cols=["ID","Name","Designation","System Role","Dept","Reports To","Join Date","Salary","Compliance",null];
       return `<div class="scroll"><table id="hTbl"><tr>${cols.map(c=>`<th>${c||''}</th>`).join("")}</tr>${colFilterRow(cols)}${body}</table></div>`;})()}`;
 }
@@ -1645,22 +1661,40 @@ function viewHRPassport(){
     <div class="card"><h3>Passport Management</h3>
     <div class="scroll"><table><tr>${cols.map(c=>`<th>${c||''}</th>`).join("")}</tr>${colFilterRow(cols)}${body}</table></div></div>`;
 }
-function assignCard(){
-  const edit=canEditSub('hr',HR_SUB);
+// Dedicated org-structure page — separate from the employee roster lists. Agents are grouped
+// under their current Team Leader (matching how a manager actually thinks about "who's on whose
+// team"), rather than one flat table mixed in with general employee browsing.
+function viewHRTeamAssignment(){
+  const edit=canEditSub('hr','team');
   const tls=DB.employees.filter(e=>e.role==="team_leader");
   const agents=DB.employees.filter(e=>e.role==="agent");
-  const rows=agents.map(a=>{
-    const cur=(a.tl&&a.tl!=="-")?a.tl:'<span class="muted">Unassigned</span>';
-    const sel=`<select onchange="reassignAgent('${a.id}',this.value)">
-        <option value="">— reassign… —</option>
-        ${tls.filter(t=>t.name!==a.tl).map(t=>`<option value="${t.name}">→ ${t.name}</option>`).join("")}
-        ${a.tl&&a.tl!=="-"?'<option value="-">→ Unassign</option>':''}
-      </select>`;
-    return `<tr><td>${a.name}</td><td>${cur}</td>${edit?`<td>${sel}</td>`:''}</tr>`;
+  const unassigned=agents.filter(a=>!a.tl||a.tl==="-");
+  const avgTeam=tls.length?Math.round((agents.length-unassigned.length)/tls.length*10)/10:0;
+  const moveSelect=(a,exclude)=>`<select onchange="reassignAgent('${a.id}',this.value)">
+      <option value="">— move to… —</option>
+      ${tls.filter(t=>t.name!==exclude).map(t=>`<option value="${t.name}">→ ${t.name}</option>`).join("")}
+      ${exclude&&exclude!=="-"?'<option value="-">→ Unassign</option>':''}
+    </select>`;
+  const unassignedCard=unassigned.length?`<div class="card" style="border-left:4px solid var(--amber)"><h3>Unassigned Agents <span class="badge" style="background:var(--amber)">${unassigned.length}</span></h3>
+    <table><tr><th>Agent</th><th>Designation</th><th>Join Date</th>${edit?'<th>Assign</th>':''}</tr>
+    ${unassigned.map(a=>`<tr><td>${a.name}</td><td class="muted">${a.desig}</td><td class="muted">${a.join}</td>${edit?`<td>${moveSelect(a,'-')}</td>`:''}</tr>`).join("")}
+    </table></div>`:'';
+  const teamCards=tls.map(tl=>{
+    const members=agents.filter(a=>a.tl===tl.name);
+    const rows=members.map(a=>`<tr><td>${a.name}</td><td class="muted">${a.desig}</td><td class="muted">${a.join}</td>${edit?`<td>${moveSelect(a,tl.name)}</td>`:''}</tr>`).join("");
+    return `<div class="card"><h3>${tl.name} <span class="muted" style="font-weight:400">— ${tl.desig}</span> <span class="badge">${members.length} agent${members.length===1?'':'s'}</span></h3>
+      ${members.length?`<table><tr><th>Agent</th><th>Designation</th><th>Join Date</th>${edit?'<th>Move</th>':''}</tr>${rows}</table>`:'<p class="muted" style="font-size:12px">No agents assigned yet.</p>'}
+    </div>`;
   }).join("");
-  return `<div class="card"><h3>Agent → Team Leader Assignment ${edit?'<span class="badge">EDITABLE</span>':''}</h3>
-    <div class="flag warn" style="margin-top:0">Privacy: when an agent is reassigned, the new Team Leader sees only records created <b>from that point on</b>. Past records stay private to the previous Team Leader.</div>
-    <table><tr><th>Agent</th><th>Current Team Leader</th>${edit?'<th>Reassign</th>':''}</tr>${rows}</table></div>`;
+  return `<div class="kpis">
+      ${kpi("Team Leaders",tls.length,"var(--blue)","")}
+      ${kpi("Total Agents",agents.length,"var(--purple)","")}
+      ${kpi("Unassigned",unassigned.length,unassigned.length?"var(--amber)":"var(--green)","")}
+      ${kpi("Avg Team Size",avgTeam,"var(--green)","agents per TL")}
+    </div>
+    <div class="flag warn">Privacy: when an agent is reassigned, the new Team Leader sees only records created <b>from that point on</b>. Past records stay private to the previous Team Leader.</div>
+    ${unassignedCard}
+    ${teamCards}`;
 }
 function reassignAgent(empId,newTL){
   if(!canEditSub('hr',HR_SUB)||!newTL) return;
@@ -1927,7 +1961,7 @@ function openAccountTx(id){
   const body=rows.length?rows.map(t=>`<tr><td>${t.date}</td><td>${tag(t.type)}</td><td style="color:${t.amount<0?'var(--brand2)':'var(--green)'}">${t.amount<0?'-':''}${AED(Math.abs(t.amount))}</td><td class="muted">${t.note||''}</td></tr>`).join(""):'<tr><td colspan="4" class="muted">No transactions yet.</td></tr>';
   openModalInfo(`${a.name} — Transactions`,`
     <div class="flag good" style="margin-top:0">Opening ${AED(a.opening)} · Running balance <b>${AED(accountBalance(id))}</b></div>
-    <div class="scroll" style="max-height:50vh"><table><tr><th>Date</th><th>Type</th><th>Amount</th><th>Note</th></tr>${body}</table></div>`);
+    <table><tr><th>Date</th><th>Type</th><th>Amount</th><th>Note</th></tr>${body}</table>`);
 }
 function exportAccounts(){
   const rows=DB.accounts.map(a=>[a.name,a.type,a.opening,accountBalance(a.id)]);
@@ -2123,7 +2157,7 @@ function viewPL(){
         <p class="muted" style="font-size:11px;margin-top:8px">Maps to FTA VAT201 return. EmaraTax-ready in full build.</p></div>
     </div>
     <div class="card"><h3>Invoices & Bills</h3>${(()=>{const cols=["Ref","Date","Party","Type","Net","VAT","Total","Status"];
-      return `<div class="scroll" style="max-height:34vh"><table><tr>${cols.map(c=>`<th>${c}</th>`).join("")}</tr>${colFilterRow(cols)}${inv}</table></div>`;})()}</div>`;
+      return `<div class="scroll"><table><tr>${cols.map(c=>`<th>${c}</th>`).join("")}</tr>${colFilterRow(cols)}${inv}</table></div>`;})()}</div>`;
 }
 
 /* ============================================================
@@ -2271,7 +2305,7 @@ function viewAdminUsers(){
     <td>${editable?`<button class="btn-ghost" onclick="resetPasswordModal('${e.id}')">Change Password</button>`:''}</td></tr>`).join("");
   return `<div class="card"><h3>Users <span class="badge">ADMIN</span></h3>
     <p class="muted" style="font-size:12px;margin-top:0">Each employee signs in with their own username. Passwords are never shown to anyone — use Change Password to set a new one.</p>
-    <div class="scroll" style="max-height:60vh"><table><tr><th>Name</th><th>Role</th><th>Username</th><th></th></tr>${rows}</table></div></div>`;
+    <div class="scroll"><table><tr><th>Name</th><th>Role</th><th>Username</th><th></th></tr>${rows}</table></div></div>`;
 }
 function viewAdminProducts(){
   const editable=canEditSub('admin','products');
