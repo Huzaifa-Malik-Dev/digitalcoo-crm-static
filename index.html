@@ -130,16 +130,16 @@ input.colf::placeholder{color:#5c6c8c}
 .menucard .mi{display:block;width:100%;text-align:left;background:transparent;color:var(--txt);padding:9px 11px;border-radius:6px;font-weight:600;font-size:13px}
 .menucard .mi:hover{background:var(--panel2)}
 .menucard .mi.disabled{color:var(--muted);cursor:default}
-.bell{position:relative;background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:7px 11px;font-size:16px;cursor:pointer;margin-right:10px;color:var(--txt)}
-.bell:hover{border-color:var(--brand2)}
-.bellbadge{position:absolute;top:-7px;right:-7px;background:var(--brand);color:#fff;border-radius:20px;font-size:10px;font-weight:700;padding:1px 6px;min-width:18px;text-align:center;line-height:1.5}
+.bell{position:relative;width:38px;height:38px;background:transparent;border:1px solid transparent;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;color:var(--txt)}
+.bell:hover{background:var(--panel2);border-color:var(--line)}
+.bellbadge{position:absolute;top:2px;right:2px;background:var(--brand);color:#fff;border-radius:20px;font-size:9px;font-weight:700;padding:1px 5px;min-width:16px;text-align:center;line-height:1.4;box-shadow:0 0 0 2px var(--panel)}
 .chatbtn{position:relative;padding:8px 10px}
 .cbadge{position:absolute;top:-6px;right:-5px;background:var(--brand);color:#fff;border-radius:20px;font-size:9px;font-weight:700;padding:0 5px;line-height:16px;min-width:16px;text-align:center}
-.notifpanel{position:fixed;z-index:61;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 16px 40px rgba(0,0,0,.55);width:360px;max-height:64vh;overflow:auto;padding:8px}
-.notif{display:flex;gap:10px;padding:11px 10px;border-bottom:1px solid var(--line)}
-.notif.unread{background:rgba(227,6,19,.07)}
-.notif .dot{width:8px;height:8px;border-radius:50%;background:var(--brand2);margin-top:5px;flex:0 0 8px}
-.notif.read .dot{background:transparent;border:1px solid var(--line)}
+.notifpanel{position:fixed;z-index:61;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 16px 40px rgba(0,0,0,.55);width:360px;max-height:64vh;overflow:auto;padding:6px}
+.notif{display:flex;gap:10px;padding:11px 12px;border-radius:9px;border-left:3px solid transparent;cursor:default}
+.notif:hover{background:var(--panel2)}
+.notif.unread{border-left-color:var(--brand2)}
+.notif.unread .ntext{font-weight:600}
 .notif small{color:var(--muted)}
 .toastwrap{position:fixed;right:18px;bottom:18px;z-index:80;display:flex;flex-direction:column;gap:10px}
 .toast{background:var(--panel);border:1px solid var(--brand2);border-left:4px solid var(--brand2);border-radius:10px;padding:12px 14px;width:330px;box-shadow:0 12px 30px rgba(0,0,0,.5);font-size:13px;animation:slidein .25s ease;transition:opacity .4s}
@@ -184,7 +184,7 @@ input.colf::placeholder{color:#5c6c8c}
 <!-- ===================== LOGIN ===================== -->
 <div id="login">
   <div class="login-card">
-    <div class="logo">Digi<span>coo</span> CRM</div>
+    <div class="logo">Digi<span>talcoo</span> CRM</div>
     <p class="muted" style="margin:6px 0 18px">e& Authorised Channel Partner — Operations Platform <span class="badge">DEMO</span></p>
     <label>Sign in to your portal</label>
     <div class="role-grid" id="roleGrid"></div>
@@ -196,7 +196,7 @@ input.colf::placeholder{color:#5c6c8c}
 <div id="app">
   <div class="sidebackdrop" onclick="toggleSidebar()"></div>
   <aside class="side">
-    <div class="logo" style="font-size:18px;padding:6px 8px 14px">Digi<span>coo</span> CRM</div>
+    <div class="logo" style="font-size:18px;padding:6px 8px 14px">Digi<span>talcoo</span> CRM</div>
     <div id="nav"></div>
     <div style="margin-top:auto">
       <div class="nav-item" onclick="openDemoGuide()"><span class="ic">?</span> Demo walkthrough</div>
@@ -210,8 +210,8 @@ input.colf::placeholder{color:#5c6c8c}
       <div class="who">
         <button class="bell" onclick="toggleNotif(event)" title="Notifications">🔔<span id="bellCount" class="bellbadge hidden">0</span></button>
         <div class="acctbtn" onclick="toggleAccountMenu(event)" title="Account">
-          <div class="right"><div id="whoName" style="font-weight:700"></div><div class="muted" id="whoRole" style="font-size:12px"></div></div>
           <div class="avatar" id="whoAv">A</div>
+          <span id="whoNameShort" style="font-weight:600;font-size:13px"></span>
           <span class="muted" style="font-size:10px">▾</span>
         </div>
       </div>
@@ -529,6 +529,7 @@ let DSR_PAGE=null;
 let DEAL_PAGE=null;
 let ORDER_PAGE=null;
 let SIDEBAR_OPEN=true;
+let PROFILE_PAGE=false;
 
 /* ============================================================
    LIVE SYNC + NOTIFICATIONS
@@ -573,8 +574,8 @@ function toggleNotif(ev){
   if(ev) ev.stopPropagation();
   const list=myNotifs();
   const body=list.length
-    ? list.slice(0,40).map(n=>`<div class="notif ${n.read?'read':'unread'}" style="cursor:${n.dsrNo?'pointer':'default'}" onclick="notifClick('${n.id}')"><div class="dot"></div><div style="flex:1"><div>${n.text}</div><small>${n.ts}${n.dsrNo?' · <span style="color:var(--brand2)">open chat ›</span>':''}</small></div></div>`).join("")
-    : '<p class="muted" style="padding:16px">No notifications yet.</p>';
+    ? list.slice(0,40).map(n=>`<div class="notif ${n.read?'':'unread'}" style="cursor:${n.dsrNo?'pointer':'default'}" onclick="notifClick('${n.id}')"><div style="flex:1"><div class="ntext">${n.text}</div><small>${n.ts}${n.dsrNo?' · <span style="color:var(--brand2)">open chat ›</span>':''}</small></div></div>`).join("")
+    : '<p class="muted" style="padding:16px;text-align:center">🔔<br>No notifications yet.</p>';
   document.getElementById("menuHost").innerHTML=`<div class="menubackdrop" onclick="closeMenu()"></div>
     <div class="notifpanel" style="right:24px;top:62px">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px 10px">
@@ -588,10 +589,11 @@ function toggleAccountMenu(ev){
   if(!SESSION) return;
   document.getElementById("menuHost").innerHTML=`<div class="menubackdrop" onclick="closeMenu()"></div>
     <div class="menucard" style="right:24px;top:62px">
-      <div style="padding:9px 11px;border-bottom:1px solid var(--line);margin-bottom:6px">
-        <div style="font-weight:700">${SESSION.name}</div><div class="muted" style="font-size:12px">${ROLES[SESSION.role].name}</div>
+      <div style="padding:10px 11px 12px;border-bottom:1px solid var(--line);margin-bottom:6px;display:flex;align-items:center;gap:10px">
+        <div class="avatar" style="width:36px;height:36px;font-size:14px">${SESSION.name[0]}</div>
+        <div><div style="font-weight:700">${SESSION.name}</div><span class="rolepill" style="margin-top:2px;display:inline-block">${ROLES[SESSION.role].name}</span></div>
       </div>
-      <button class="mi" onclick="closeMenu();myProfileModal()">👤 My Profile</button>
+      <button class="mi" onclick="closeMenu();openMyProfilePage()">👤 My Profile</button>
       <button class="mi" onclick="closeMenu();logout()">⎋ Logout</button>
     </div>`;
 }
@@ -692,8 +694,7 @@ function doLogin(role,name){
   $("app").style.display="grid";
   SIDEBAR_OPEN=window.innerWidth>860; applySidebarState();
   document.documentElement.style.setProperty("--role", roleColor(role));
-  $("whoName").textContent=name;
-  const wr=$("whoRole"); wr.textContent=ROLES[role].name; wr.className="rolepill";
+  $("whoNameShort").textContent=name;
   $("whoAv").textContent=name[0];
   try{ AGENT_FILTER=localStorage.getItem("digicoo_agent_"+name)||""; }catch(e){ AGENT_FILTER=""; }
   if(AGENT_FILTER && !baseVisibleAgents().includes(AGENT_FILTER)) AGENT_FILTER="";
@@ -747,6 +748,12 @@ function renderNav(){
   });
 }
 function render(){
+  if(PROFILE_PAGE){
+    $("pageTitle").textContent="My Profile";
+    $("view").innerHTML=viewMyProfile();
+    renderBell(); renderAgentFilter(); enhanceSelects($("view"));
+    return;
+  }
   const d=NAVDEF[CURRENT];
   const sub=currentSubOf(CURRENT);
   const subLabel=(sub&&d.subs)?((d.subs.find(s=>s.key===sub)||{}).t):null;
@@ -831,12 +838,14 @@ function resetUserOverride(empId){
 }
 function go(mod){
   if(!canView(mod)){ toast("This role does not have access to "+(NAVDEF[mod]?NAVDEF[mod].t:mod)); return; }
+  PROFILE_PAGE=false;
   const d=NAVDEF[mod];
   if(d.subs){ goSub(mod,currentSubOf(mod)||d.subs[0].key); return; }
   CURRENT=mod; if(mod==="dsr") DATE_FILTER="all"; renderNav(); render(); closeSidebarOnMobile();
 }
 function goSub(mod,subKey){
   if(!canView(mod)){ toast("This role does not have access to "+(NAVDEF[mod]?NAVDEF[mod].t:mod)); return; }
+  PROFILE_PAGE=false;
   const d=NAVDEF[mod];
   if(!canViewSub(mod,subKey)){
     const first=visibleSubs(myAccessList(),mod,d)[0];
@@ -2341,23 +2350,46 @@ function resetPasswordModal(empId){
     e.password=p1; save(); toast(`Password changed for ${e.name}.`);
   });
 }
-function myProfileModal(){
+function openMyProfilePage(){ if(!sessionEmp()) return; PROFILE_PAGE=true; render(); }
+function viewMyProfile(){
+  const e=sessionEmp();
+  if(!e) return `<p class="muted">Not logged in.</p>`;
+  const backBtn=`<button class="btn-ghost" onclick="PROFILE_PAGE=false;render();">← Back</button>`;
+  return `${backBtn}
+  <div class="profile-grid" style="margin-top:14px">
+    <div>
+      <div class="card"><h3>My Profile</h3>
+        <div class="row">
+          <div><label>Name</label><div style="padding:8px 0"><b>${e.name}</b></div></div>
+          <div><label>Role</label><div style="padding:8px 0"><span class="rolepill">${ROLES[e.role].name}</span></div></div>
+        </div>
+        <div class="row"><div><label>Username</label><div style="padding:8px 0">${e.username||''}</div></div></div>
+      </div>
+      <div class="card"><h3>Change Password</h3>
+        <p class="muted" style="margin-top:0;font-size:12px">For security, your current password is never shown — enter a new one below.</p>
+        <label>New Password</label><input id="pw_new" type="password" placeholder="New password">
+        <label>Confirm Password</label><input id="pw_conf" type="password" placeholder="Confirm new password">
+        <button class="btn-primary" style="margin-top:12px" onclick="saveMyPassword()">💾 Save Password</button>
+      </div>
+    </div>
+    <div>
+      <div class="card" style="text-align:center">
+        <div class="avatar" style="width:64px;height:64px;font-size:22px;margin:0 auto 10px">${e.name[0]}</div>
+        <div style="font-weight:700">${e.name}</div>
+        <span class="rolepill" style="margin-top:6px;display:inline-block">${ROLES[e.role].name}</span>
+      </div>
+    </div>
+  </div>`;
+}
+function saveMyPassword(){
   const e=sessionEmp(); if(!e) return;
-  openModal(`My Profile — ${e.name}`,`
-    <table><tr><td class="muted">Name</td><td><b>${e.name}</b></td></tr>
-    <tr><td class="muted">Role</td><td>${ROLES[e.role].name}</td></tr>
-    <tr><td class="muted">Username</td><td>${e.username||''}</td></tr></table>
-    <div class="nav-sec" style="margin-left:0">Change Password</div>
-    <p class="muted" style="margin-top:0;font-size:12px">For security, your current password is never shown — enter a new one below.</p>
-    <label>New Password</label><input id="pw_new" type="password" placeholder="New password">
-    <label>Confirm Password</label><input id="pw_conf" type="password" placeholder="Confirm new password">
-  `,()=>{
-    const p1=$("pw_new").value, p2=$("pw_conf").value;
-    if(!p1&&!p2) return; // no change requested, just close
-    if(!p1||p1.length<4){ alert("Password must be at least 4 characters."); return false; }
-    if(p1!==p2){ alert("Passwords do not match."); return false; }
-    e.password=p1; save(); toast("Your password has been changed.");
-  });
+  const p1=$("pw_new").value, p2=$("pw_conf").value;
+  if(!p1&&!p2){ toast("No changes to save."); return; }
+  if(!p1||p1.length<4){ alert("Password must be at least 4 characters."); return; }
+  if(p1!==p2){ alert("Passwords do not match."); return; }
+  e.password=p1; save();
+  $("pw_new").value=""; $("pw_conf").value="";
+  toast("Your password has been changed.");
 }
 function addProductModal(){
   openModal("Add Product",`
