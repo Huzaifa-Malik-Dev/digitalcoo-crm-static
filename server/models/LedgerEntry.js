@@ -14,6 +14,16 @@ const ledgerEntrySchema = new mongoose.Schema(
     remaining: { type: Number, default: 0 },
     status: { type: String, enum: ['Open', 'Settled'], default: 'Open' },
     note: { type: String, default: '' },
+    // Off-cycle entries (outside a payroll run) have no cash movement by default — they're just a
+    // record of what's owed. Checking "Adjust in Accounts" and picking a funding account posts a
+    // real journal entry instead; left unchecked, this stays a paperwork-only note (surfaced to
+    // the user as an explicit warning on the form, since it means the number won't show up
+    // anywhere in Accounting).
+    postToAccounts: { type: Boolean, default: false },
+    account: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', default: null },
+    // Set when postToAccounts posted a journal entry for this row — lets edit/delete find and
+    // reverse/remove exactly that entry.
+    journalEntry: { type: mongoose.Schema.Types.ObjectId, ref: 'JournalEntry', default: null },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     // set on auto-generated Deduction rows, pointing back at the Advance/Loan they paid down
     parent: { type: mongoose.Schema.Types.ObjectId, ref: 'LedgerEntry', default: null },

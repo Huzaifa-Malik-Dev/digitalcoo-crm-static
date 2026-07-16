@@ -25,7 +25,7 @@ export default function EmployeeLedgerPage() {
   return (
     <Stack gap="md">
       <Group>
-        <ActionIcon variant="subtle" onClick={() => navigate(-1)} aria-label="Back">
+        <ActionIcon variant="subtle" onClick={() => navigate('/hr')} aria-label="Back to HR">
           <ArrowLeft size={18} />
         </ActionIcon>
         <div>

@@ -6,9 +6,10 @@ const morgan = require('morgan');
 const mongoSanitize = require('express-mongo-sanitize');
 const path = require('path');
 
-const { clientOrigin, nodeEnv, uploadDir } = require('./config/env');
+const { clientOrigin, uploadDir } = require('./config/env');
 const errorHandler = require('./middlewares/errorHandler');
 const requireAuth = require('./middlewares/auth');
+const { requestContext } = require('./middlewares/requestContext');
 
 const authRoutes = require('./routes/auth');
 const dsrRoutes = require('./routes/dsr');
@@ -24,7 +25,9 @@ const misRoutes = require('./routes/mis');
 const aiRoutes = require('./routes/ai');
 const threadRoutes = require('./routes/threads');
 const productRoutes = require('./routes/products');
-const segmentRoutes = require('./routes/segments');
+const leaveRoutes = require('./routes/leave');
+const attendanceRoutes = require('./routes/attendance');
+const viewRoutes = require('./routes/views');
 
 const app = express();
 
@@ -33,7 +36,12 @@ app.use(cors({ origin: clientOrigin, credentials: true }));
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 app.use(mongoSanitize());
-if (nodeEnv === 'development') app.use(morgan('dev'));
+app.use(requestContext);
+// Successful GET requests are routine polling (notifications, list views, etc.) and add no
+// tracing value — only log GETs that errored, plus every mutating request (POST/PATCH/PUT/
+// DELETE) regardless of outcome. Meaningful business events are already covered by the
+// [ACTIVITY] log (utils/activityLog.js); this is just enough HTTP-level detail to debug errors.
+app.use(morgan('dev', { skip: (req, res) => req.method === 'GET' && res.statusCode < 400 }));
 
 // Uploaded files include HR compliance documents and chat attachments — never public.
 // Any authenticated user may fetch by path (matches the app's general auth model; the paths
@@ -61,7 +69,9 @@ app.use('/mis', misRoutes);
 app.use('/ai', aiRoutes);
 app.use('/threads', threadRoutes);
 app.use('/products', productRoutes);
-app.use('/segments', segmentRoutes);
+app.use('/leave', leaveRoutes);
+app.use('/attendance', attendanceRoutes);
+app.use('/views', viewRoutes);
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 app.use(errorHandler);

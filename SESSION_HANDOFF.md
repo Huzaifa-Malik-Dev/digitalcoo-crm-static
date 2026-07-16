@@ -10,7 +10,7 @@ This repo started as a single 2,488-line vanilla-JS `index.html` prototype (stil
 
 - **Project now lives at `D:\projects\digitalcoo-crm`**, NOT the original `G:\My Drive\KGC\projects\digicoo-crm`. It was moved because that path is a Google Drive Desktop sync folder — `npm install` there reliably fails with `EBADF`/`EPERM`/`ENOTEMPTY` errors from Drive locking files during install. **Never run `npm install` under `G:\My Drive\...`.** The `G:\` copy still exists as an untouched backup (has the original `index.html`, `joydata.js`, and a stale `.claude/launch.json` pointing at the D: drive) — do not delete it without asking.
 - Git history was preserved in the move (`cp -a` including `.git`). The D:\ copy is a fully independent git repo (not a worktree of the G:\ one).
-- **MongoDB Community Server 8.3.4** is installed natively on Windows (not Docker — user explicitly rejected Docker for this app) and runs as a Windows service (`Get-Service -Name MongoDB`). Connection string: `mongodb://127.0.0.1:27017/digicoo_crm`.
+- **MongoDB Community Server 8.3.4** is installed natively on Windows (not Docker — user explicitly rejected Docker for this app) and runs as a Windows service (`Get-Service -Name MongoDB`). Connection string: `mongodb://127.0.0.1:27017/digitalcoo_crm`.
 - **Server runs on port 5601**, not 5600 — 5600 was already occupied by an unrelated process (PID 32552) on the user's machine when we tried to start it. Per explicit user instruction: **never kill unknown processes to free a port — always move to the next free port instead** (5600→5601 pattern). If 5601 is ever occupied too, check with `Get-NetTCPConnection -LocalPort <port>` and bump again; update `server/.env` (`PORT=`), `client/.env` (`VITE_API_URL=`), and **both** `.claude/launch.json` files (`D:\projects\digitalcoo-crm\.claude\launch.json` and `G:\My Drive\KGC\projects\digicoo-crm\.claude\launch.json`).
 - **Client runs on port 5173** (Vite default), CORS-locked to it via `CLIENT_ORIGIN` in server `.env`.
 - **The Preview MCP tool's project root is locked to wherever the session started** — if a fresh session starts in `D:\projects\digitalcoo-crm`, this problem goes away and `preview_start`/`preview_screenshot`/etc. should work normally against `.claude/launch.json` in that folder. (In the prior session, root was stuck on the old `G:\` path even after the move, which is the whole reason this handoff exists — restart from `D:\` to avoid it.)
@@ -64,7 +64,7 @@ This repo started as a single 2,488-line vanilla-JS `index.html` prototype (stil
 ```
 # server/.env
 PORT=5601
-MONGO_URI=mongodb://127.0.0.1:27017/digicoo_crm
+MONGO_URI=mongodb://127.0.0.1:27017/digitalcoo_crm
 JWT_SECRET=<64-byte hex, already generated>
 JWT_EXPIRES=7d
 NODE_ENV=development

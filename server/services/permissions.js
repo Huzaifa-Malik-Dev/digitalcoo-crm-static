@@ -45,7 +45,15 @@ function canView(user, key) {
   return parentKey ? canView(user, parentKey) : true;
 }
 
+// Team Leaders always get full edit rights on DSR and Pipeline records, no matter how admin has
+// configured the Permissions screen (role list or per-user override) - this is a floor, not a
+// default, so it's checked before any override/role-list lookup rather than being encoded as
+// seed data an admin could still narrow away. Deliberately doesn't cover pipeline.approve (a
+// separate, still-overridable permission) or any other module.
+const TL_UNCONDITIONAL_EDIT = ['dsr', 'pipeline'];
+
 function canEdit(user, key) {
+  if (user.role === 'team_leader' && TL_UNCONDITIONAL_EDIT.includes(key)) return true;
   const perms = cache;
   if (!perms) return false;
   const override = perms.userOverrides?.[String(user._id)]?.edit;

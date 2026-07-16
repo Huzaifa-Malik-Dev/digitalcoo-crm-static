@@ -128,12 +128,12 @@ export default function EmployeeCommissionTiersSection({ employeeId, canEdit }) 
                   <Table.Td>
                     <Group gap="xs" wrap="nowrap">
                       <Tooltip label="Edit tier">
-                        <ActionIcon variant="light" size="sm" radius="md" onClick={() => openEdit(t)} aria-label="Edit tier">
+                        <ActionIcon variant="filled" size="sm" radius="md" onClick={() => openEdit(t)} aria-label="Edit tier">
                           <Pencil size={14} />
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="Delete tier">
-                        <ActionIcon variant="light" color="red" size="sm" radius="md" onClick={() => handleDelete(t)} aria-label="Delete tier">
+                        <ActionIcon variant="filled" color="red" size="sm" radius="md" onClick={() => handleDelete(t)} aria-label="Delete tier">
                           <Trash2 size={14} />
                         </ActionIcon>
                       </Tooltip>

@@ -5,7 +5,6 @@ export const fetchSummary = () => api.get('/accounting/summary').then((r) => r.d
 export const fetchAccounts = () => api.get('/accounting/accounts').then((r) => r.data);
 export const createAccount = (body) => api.post('/accounting/accounts', body).then((r) => r.data);
 export const updateAccount = (id, body) => api.patch(`/accounting/accounts/${id}`, body).then((r) => r.data);
-export const fetchAccountTransactions = (id, params) => api.get(`/accounting/accounts/${id}/transactions`, { params }).then((r) => r.data);
 export const recordTransaction = (body) => api.post('/accounting/transactions', body).then((r) => r.data);
 
 export const fetchExpenses = (params) => api.get('/accounting/expenses', { params }).then((r) => r.data);

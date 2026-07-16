@@ -1,25 +1,36 @@
 const { z } = require('zod');
 const Pipeline = require('../models/Pipeline');
 const Dsr = require('../models/Dsr');
+const Order = require('../models/Order');
 const User = require('../models/User');
 const { nextSeq } = require('../models/Counter');
 const { parsePagination, buildPageResponse } = require('../utils/pagination');
+const { regexOr, numericRegexOr } = require('../utils/search');
 const {
   convertToPipeline,
   escalateToTL,
   tlApprove,
   tlReject,
   ensureOrderForPipeline,
+  requestOrderCorrection,
 } = require('../services/workflow');
-const { PIPE_STAGES } = require('../utils/constants');
+const { PIPE_STAGES, SR_TYPES } = require('../utils/constants');
 const { sendXlsx, parseXlsxBuffer, cell, resolveAgentFromRow } = require('../utils/importExport');
 const AppError = require('../utils/AppError');
+const { logActivity, diffFields } = require('../utils/activityLog');
+const { attachIsNew } = require('../services/recordViews');
+
+const PIPELINE_FIELD_LABELS = {
+  cat: 'Category', product: 'Product', sr: 'SR', price: 'Price', qty: 'Qty', email: 'Email',
+  stage: 'Stage', startedDate: 'Started Date', expectedCloseDate: 'Expected Close Date',
+  director: 'Director', remarks: 'Remarks',
+};
 
 const convertSchema = z.object({
   dsrId: z.string().min(1),
   cat: z.string().optional(),
   product: z.string().optional(),
-  sr: z.string().optional(),
+  sr: z.enum(SR_TYPES).optional(),
   price: z.number().optional(),
   qty: z.number().optional(),
   email: z.string().optional(),
@@ -28,19 +39,20 @@ const convertSchema = z.object({
 
 const reasonSchema = z.object({ reason: z.string().optional() });
 
+// startedDate is deliberately absent - it's system-set at conversion/import time and can never be
+// changed via this endpoint (unknown keys are stripped by zod's default object() behavior, so a
+// client that still sends it is silently ignored rather than erroring).
 const updateSchema = z.object({
-  cat: z.string().optional(),
-  product: z.string().optional(),
-  sr: z.string().optional(),
-  price: z.number().min(0).optional(),
-  qty: z.number().min(1).optional(),
-  email: z.string().optional(),
+  cat: z.string().trim().min(1, 'Category is required'),
+  product: z.string().trim().min(1, 'Product is required'),
+  sr: z.enum(SR_TYPES, { errorMap: () => ({ message: 'Subscription Type is required' }) }),
+  price: z.number().positive('Price is required'),
+  qty: z.number().min(1, 'Quantity is required'),
+  email: z.string().trim().min(1, 'Customer Email is required'),
   stage: z.enum(PIPE_STAGES).optional(),
-  startedDate: z.string().optional(),
-  expectedCloseDate: z.string().optional(),
+  expectedCloseDate: z.string().trim().min(1, 'Expected Close Date is required'),
   director: z.string().optional(),
-  directorInvolvement: z.string().optional(),
-  remarks: z.string().optional(),
+  remarks: z.string().trim().min(1, 'Remarks are required'),
 });
 
 function scopeFilter(user) {
@@ -58,10 +70,15 @@ async function list(req, res, next) {
     if (req.query.stage) filter.stage = req.query.stage;
     if (req.query.approval) filter.approval = req.query.approval;
     if (req.query.search) {
-      const re = new RegExp(req.query.search.trim(), 'i');
+      const term = req.query.search.trim();
+      const re = new RegExp(term, 'i');
       const matchingAgents = await User.find({ name: re }).select('_id').lean();
       filter.$and = [
-        { $or: [{ dsrNo: re }, { company: re }, { customer: re }, { product: re }, { agentId: { $in: matchingAgents.map((u) => u._id) } }] },
+        { $or: [
+            ...regexOr(term, ['dsrNo', 'company', 'customer', 'product', 'stage', 'approval']),
+            ...numericRegexOr(term, ['qty', 'mrc']),
+            { agentId: { $in: matchingAgents.map((u) => u._id) } },
+        ] },
       ];
     }
 
@@ -69,7 +86,8 @@ async function list(req, res, next) {
       Pipeline.find(filter).sort(sort).skip(skip).limit(limit).populate('agentId', 'name').lean(),
       Pipeline.countDocuments(filter),
     ]);
-    res.json(buildPageResponse(data, totalRowCount, page, limit));
+    const withIsNew = await attachIsNew(req.user._id, 'pipeline', data);
+    res.json(buildPageResponse(withIsNew, totalRowCount, page, limit));
   } catch (err) {
     next(err);
   }
@@ -94,6 +112,23 @@ async function getOne(req, res, next) {
             );
       if (!inScope) throw new AppError('You do not have access to this deal', 403);
     }
+
+    // Surfaced so the deal panel can show correction status without the client needing to know
+    // an order id it was never given (see requestCorrection above, which resolves the same way).
+    const order = await Order.findOne({ pipelineId: pipeline._id })
+      .select('status correctionRequested correctionRequestedBy correctionRequestedAt correctionNote correctionCount')
+      .populate('correctionRequestedBy', 'name')
+      .lean();
+    pipeline.orderCorrection = order
+      ? {
+          status: order.status,
+          requested: order.correctionRequested,
+          requestedBy: order.correctionRequestedBy?.name || null,
+          requestedAt: order.correctionRequestedAt,
+          note: order.correctionNote,
+          count: order.correctionCount,
+        }
+      : null;
 
     res.json({ data: pipeline });
   } catch (err) {
@@ -120,13 +155,28 @@ async function update(req, res, next) {
     const pipeline = await Pipeline.findById(req.params.id);
     if (!pipeline) throw new AppError('Pipeline item not found', 404);
 
-    const allowed =
-      req.user.role === 'admin' ||
-      String(pipeline.agentId) === String(req.user._id) ||
-      String(pipeline.tlId) === String(req.user._id);
+    const isAdmin = req.user.role === 'admin';
+    const isTl = String(pipeline.tlId) === String(req.user._id);
+    const isAgentOwner = String(pipeline.agentId) === String(req.user._id);
+
+    const allowed = isAdmin || isAgentOwner || isTl;
     if (!allowed) throw new AppError('You cannot edit this deal', 403);
 
+    // Once a deal is awaiting TL approval, the agent who owns it can no longer change it (only
+    // the TL/admin reviewing it can) - and once the TL has approved it, nobody can edit it here
+    // at all, since the order that Back Office now owns is the source of truth from that point.
+    if (!isAdmin) {
+      if (pipeline.approval === 'approved') {
+        throw new AppError('This deal has been approved and sent to Back Office — it can no longer be edited here', 400);
+      }
+      if (pipeline.approval === 'pending_tl' && isAgentOwner && !isTl) {
+        throw new AppError('This deal is awaiting Team Leader approval and cannot be edited until then', 400);
+      }
+    }
+
     const fields = parsed.data;
+    const before = {};
+    Object.keys(PIPELINE_FIELD_LABELS).forEach((k) => { before[k] = pipeline[k]; });
     const oldStage = pipeline.stage;
     Object.assign(pipeline, fields);
     const price = fields.price ?? pipeline.price;
@@ -137,6 +187,9 @@ async function update(req, res, next) {
     }
     pipeline.history.push({ userId: req.user._id, text: 'Deal details edited' });
     await pipeline.save();
+
+    const changes = diffFields(before, pipeline.toObject(), PIPELINE_FIELD_LABELS);
+    if (changes.length) logActivity(req.user, `edited deal ${pipeline.dsrNo} (${pipeline.company}): ${changes.join(', ')}`);
 
     // Reaching 100% opens (or updates) the Back Office order, same as a TL approval does -
     // whichever path gets there first.
@@ -178,6 +231,22 @@ async function reject(req, res, next) {
   }
 }
 
+// The agent/TL's own view of this deal is the Pipeline record, not the Order Back Office owns
+// (which they typically can't even see) - so the "something's wrong, please fix it" trigger lives
+// here and resolves to the linked order internally, rather than asking the client to know an
+// order id it was never given.
+async function requestCorrection(req, res, next) {
+  try {
+    const order = await Order.findOne({ pipelineId: req.params.id });
+    if (!order) throw new AppError('No Back Office order exists yet for this deal', 404);
+    const parsed = reasonSchema.safeParse(req.body);
+    const result = await requestOrderCorrection(order._id, req.user, parsed.success ? parsed.data.reason : undefined);
+    res.json({ data: result });
+  } catch (err) {
+    next(err);
+  }
+}
+
 const EXPORT_COLUMNS = [
   { header: 'DSR No', key: 'dsrNo' },
   { header: 'Company', key: 'company' },
@@ -195,7 +264,6 @@ const EXPORT_COLUMNS = [
   { header: 'Started Date', key: 'startedDate' },
   { header: 'Expected Close Date', key: 'expectedCloseDate' },
   { header: 'Director', key: 'director' },
-  { header: 'Director Involvement', key: 'directorInvolvement' },
   { header: 'Remarks', key: 'remarks' },
   { header: 'Agent', get: (r) => r.agentId?.name || '' },
   { header: 'Agent Email', get: (r) => r.agentId?.email || '' },
@@ -215,7 +283,7 @@ async function exportPipeline(req, res, next) {
 }
 
 // A Pipeline deal always needs a backing DSR (dsrId is required — see models/Pipeline.js), so an
-// imported row gets a minimal companion "Interested" DSR created for it first, same as a real
+// imported row gets a minimal companion "Lead Generated" DSR created for it first, same as a real
 // agent would log a call before converting it — this keeps every rollup/history path consistent.
 const importRowSchema = z.object({
   company: z.string().trim().min(1, 'Company is required'),
@@ -224,14 +292,12 @@ const importRowSchema = z.object({
   customer: z.string().optional().default(''),
   cat: z.string().optional().default(''),
   product: z.string().optional().default(''),
-  sr: z.string().optional().default(''),
+  sr: z.preprocess((v) => (v === '' ? undefined : v), z.enum(SR_TYPES, { errorMap: () => ({ message: `SR must be one of: ${SR_TYPES.join(', ')}` }) }).optional()),
   price: z.number().min(0).optional().default(0),
   qty: z.number().min(1).optional().default(1),
   stage: z.enum(PIPE_STAGES, { errorMap: () => ({ message: `Stage must be one of: ${PIPE_STAGES.join(', ')}` }) }).optional().default('10%- Prospect'),
-  startedDate: z.string().optional().default(''),
   expectedCloseDate: z.string().optional().default(''),
   director: z.string().optional().default(''),
-  directorInvolvement: z.string().optional().default(''),
   remarks: z.string().optional().default(''),
 });
 
@@ -261,10 +327,8 @@ async function importPipeline(req, res, next) {
           price: priceRaw === '' ? undefined : Number(priceRaw),
           qty: qtyRaw === '' ? undefined : Number(qtyRaw),
           stage: cell(raw, 'Stage') || undefined,
-          startedDate: cell(raw, 'Started Date'),
           expectedCloseDate: cell(raw, 'Expected Close Date'),
           director: cell(raw, 'Director'),
-          directorInvolvement: cell(raw, 'Director Involvement'),
           remarks: cell(raw, 'Remarks'),
         };
         const parsed = importRowSchema.safeParse(candidate);
@@ -291,7 +355,7 @@ async function importPipeline(req, res, next) {
           contactNo: body.contactNo,
           email: body.email,
           customer: body.customer,
-          status: 'Interested',
+          status: 'Lead Generated',
           connected: 'YES',
           agentId: agent._id,
           tlId: chain[0] || null,
@@ -320,10 +384,11 @@ async function importPipeline(req, res, next) {
           mrc,
           annual: mrc * 12,
           stage: body.stage,
-          startedDate: body.startedDate,
+          // Same rule as a normal DSR conversion - startedDate is always system-set to when the
+          // deal entered the pipeline, never taken from the imported sheet.
+          startedDate: new Date().toISOString().slice(0, 10),
           expectedCloseDate: body.expectedCloseDate,
           director: body.director,
-          directorInvolvement: body.directorInvolvement,
           remarks: body.remarks,
           history: [{ userId: req.user._id, text: 'Deal imported from spreadsheet' }],
         });
@@ -333,10 +398,11 @@ async function importPipeline(req, res, next) {
       }
     }
 
+    logActivity(req.user, `imported pipeline deals from spreadsheet: ${created} created, ${errors.length} failed, ${rawRows.length} rows total`);
     res.json({ data: { total: rawRows.length, created, failed: errors.length, errors } });
   } catch (err) {
     next(err);
   }
 }
 
-module.exports = { list, getOne, create, update, escalateTl, approve, reject, exportPipeline, importPipeline };
+module.exports = { list, getOne, create, update, escalateTl, approve, reject, requestCorrection, exportPipeline, importPipeline };

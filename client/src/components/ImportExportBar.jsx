@@ -81,10 +81,10 @@ export default function ImportExportBar({ moduleKey, filenamePrefix, exportFn, i
   return (
     <>
       <Group gap="xs">
-        <Button variant="light" size="sm" leftSection={<Upload size={16} />} loading={exporting} onClick={handleExport}>
+        <Button variant="filled" size="sm" leftSection={<Upload size={16} />} loading={exporting} onClick={handleExport}>
           Export
         </Button>
-        <Button variant="light" size="sm" leftSection={<Download size={16} />} onClick={openImport}>
+        <Button variant="filled" size="sm" leftSection={<Download size={16} />} onClick={openImport}>
           Import
         </Button>
       </Group>

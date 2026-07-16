@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Stack, TextInput, NumberInput, Select, Button, Divider, Title, Text, Group, FileButton, Badge,
+  Stack, TextInput, NumberInput, Select, Button, Divider, Title, Text, Group, FileButton,
   SimpleGrid, Paper, Loader, Center, ActionIcon, Tooltip, Avatar, UnstyledButton, Modal, Image,
   SegmentedControl,
 } from '@mantine/core';
@@ -17,8 +17,12 @@ import { colorFor, initials } from '../../utils/avatar';
 import { EMPTY_COMPLIANCE, LEGAL_CASE_STATUS, ABSCONDING_STATUS, isUnderage } from './complianceDefaults';
 import EmployeeLedgerSection from './EmployeeLedgerSection';
 import EmployeeCommissionTiersSection from './EmployeeCommissionTiersSection';
+import { formatDate } from '../../utils/date';
+import Tag from '../../components/Tag';
+import PageToolbar from '../../components/PageToolbar';
 
 const STATUS_OPTIONS = ['Active', 'Inactive', 'Frozen', 'Absconding'];
+const ROLE_OPTIONS = Object.entries(ROLE_LABELS).map(([value, label]) => ({ value, label }));
 const PAY_TYPE_OPTIONS = [
   { value: 'salary', label: 'Salary Only' },
   { value: 'commission', label: 'Commission Only' },
@@ -110,7 +114,7 @@ function DocSection({ title, healthDate, fields, imgFieldF, imgFieldB, employeeI
     <Paper withBorder p="md" radius="md">
       <Group justify="space-between" mb="sm">
         <Text size="sm" fw={700}>{title}</Text>
-        {health && <Badge size="xs" color={health.color} variant="light">{health.label}</Badge>}
+        {health && <Tag size="xs" color={health.color}>{health.label}</Tag>}
       </Group>
       <Stack gap="sm">
         <SimpleGrid cols={2}>
@@ -153,7 +157,7 @@ export default function EmployeeDetailPage() {
 
   const form = useForm({
     initialValues: {
-      name: '', arabicName: '', desig: '', dept: '', email: '', phone: '',
+      name: '', arabicName: '', desig: '', dept: '', email: '', phone: '', role: 'agent',
       payType: 'salary', target: '', salary: '', join: '', status: 'Active',
       compliance: EMPTY_COMPLIANCE,
     },
@@ -168,6 +172,7 @@ export default function EmployeeDetailPage() {
       dept: employee.dept || '',
       email: employee.email || '',
       phone: employee.phone || '',
+      role: employee.role || 'agent',
       payType: employee.payType || 'salary',
       // 0 renders blank so an unset value doesn't need clearing before typing a real one -
       // coerced back to 0 on submit in handleSubmit if left blank.
@@ -240,32 +245,36 @@ export default function EmployeeDetailPage() {
 
   return (
     <Stack gap="md" w="100%">
-      <Group justify="space-between">
-        <Group>
-          <ActionIcon variant="subtle" onClick={() => navigate(-1)}>
-            <ArrowLeft size={18} />
-          </ActionIcon>
-          <div>
-            <Title order={3}>{employee.name}</Title>
-            <Group gap="xs">
-              <Text size="sm" c="dimmed">{employee.employeeId}</Text>
-              <Badge size="xs" variant="light">{ROLE_LABELS[employee.role] || employee.role}</Badge>
-              <Badge size="xs" color={STATUS_COLOR[currentStatus] || 'gray'} variant="light">{currentStatus}</Badge>
-            </Group>
-          </div>
-        </Group>
-        {canEdit && (
-          editing ? (
-            <Button size="xs" variant="light" leftSection={<Eye size={14} />} onClick={() => setSearchParams({})}>
-              Back to view
-            </Button>
-          ) : (
-            <Button size="xs" variant="light" color="red" leftSection={<Pencil size={14} />} onClick={() => setSearchParams({ edit: '1' })}>
-              Edit
-            </Button>
+      <PageToolbar
+        title={
+          <Group>
+            <ActionIcon variant="subtle" onClick={() => navigate('/hr')} aria-label="Back to HR">
+              <ArrowLeft size={18} />
+            </ActionIcon>
+            <div>
+              <Title order={3}>{employee.name}</Title>
+              <Group gap="xs">
+                <Text size="sm" c="dimmed">{employee.employeeId}</Text>
+                <Tag size="xs">{ROLE_LABELS[employee.role] || employee.role}</Tag>
+                <Tag size="xs" color={STATUS_COLOR[currentStatus] || 'gray'}>{currentStatus}</Tag>
+              </Group>
+            </div>
+          </Group>
+        }
+        actions={
+          canEdit && (
+            editing ? (
+              <Button size="xs" variant="light" leftSection={<Eye size={14} />} onClick={() => setSearchParams({})}>
+                Back to view
+              </Button>
+            ) : (
+              <Button size="xs" variant="light" color="red" leftSection={<Pencil size={14} />} onClick={() => setSearchParams({ edit: '1' })}>
+                Edit
+              </Button>
+            )
           )
-        )}
-      </Group>
+        }
+      />
 
       <form onSubmit={form.onSubmit(handleSubmit)}>
         <Group align="flex-start" gap="md" wrap="wrap">
@@ -278,6 +287,15 @@ export default function EmployeeDetailPage() {
               <TextInput label="Designation" readOnly={!editing} {...form.getInputProps('desig')} />
               <TextInput label="Department" readOnly={!editing} {...form.getInputProps('dept')} />
               <TextInput type="date" label="Join Date" readOnly={!editing} {...form.getInputProps('join')} />
+              <Tooltip label="You can't change your own role - ask another admin or HR" disabled={!isSelf}>
+                <Select
+                  label="Role"
+                  data={ROLE_OPTIONS}
+                  disabled={editing && isSelf}
+                  readOnly={!editing}
+                  {...form.getInputProps('role')}
+                />
+              </Tooltip>
               <Select
                 label="Pay Type"
                 data={PAY_TYPE_OPTIONS}
@@ -529,7 +547,7 @@ export default function EmployeeDetailPage() {
               </div>
               <div>
                 <Text size="xs" c="dimmed">Status</Text>
-                <Badge size="sm" color={STATUS_COLOR[currentStatus] || 'gray'} variant="light">{currentStatus}</Badge>
+                <Tag size="sm" color={STATUS_COLOR[currentStatus] || 'gray'}>{currentStatus}</Tag>
               </div>
               <div>
                 <Text size="xs" c="dimmed">Department</Text>
@@ -537,7 +555,7 @@ export default function EmployeeDetailPage() {
               </div>
               <div>
                 <Text size="xs" c="dimmed">Join Date</Text>
-                <Text size="sm">{employee.join || '—'}</Text>
+                <Text size="sm">{formatDate(employee.join) || '—'}</Text>
               </div>
             </Stack>
           </Paper>

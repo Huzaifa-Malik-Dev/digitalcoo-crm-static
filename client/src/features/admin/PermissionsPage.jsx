@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Stack, Title, Text, Paper, SegmentedControl, Select, Group, Badge, Button, Loader, Center,
+  Stack, Title, Text, Paper, SegmentedControl, Select, Group, Button, Loader, Center,
   SimpleGrid, NavLink, Tooltip, Switch, Divider, ActionIcon,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { notifications } from '../../utils/toast';
 import { TriangleAlert, ChevronDown, ChevronRight } from 'lucide-react';
+import Tag from '../../components/Tag';
 import {
   fetchPermissions,
   updateRolePermission,
@@ -176,7 +177,7 @@ export default function PermissionsPage() {
   return (
     <Stack gap="md">
       <div>
-        <Title order={2} size="h4">Permissions <Badge ml="xs" color="red" variant="light">EDITABLE</Badge></Title>
+        <Title order={2} size="h4">Permissions <Tag ml="xs" color="red">EDITABLE</Tag></Title>
         <Text size="sm" c="dimmed">Pick a role to set the default for everyone in it, or a specific person to override just them. "Edit" always includes "View".</Text>
       </div>
 

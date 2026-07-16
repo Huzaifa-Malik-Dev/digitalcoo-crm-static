@@ -11,6 +11,16 @@ const {
   IMPORT_EXPORT_DEFAULT,
 } = require('../utils/constants');
 const AppError = require('../utils/AppError');
+const User = require('../models/User');
+const ActivityLog = require('../models/ActivityLog');
+const { logActivity } = require('../utils/activityLog');
+const { parsePagination, buildPageResponse } = require('../utils/pagination');
+const { regexOr } = require('../utils/search');
+
+async function userLabel(userId) {
+  const u = await User.findById(userId).select('employeeId name').lean();
+  return u ? `${u.employeeId} (${u.name})` : userId;
+}
 
 async function getPermissionsDoc(req, res, next) {
   try {
@@ -118,6 +128,7 @@ async function updateRolePermission(req, res, next) {
     const updated = await setPermissions({
       $set: { [`byRole.${role}`]: view, [`editByRole.${role}`]: edit },
     });
+    logActivity(req.user, `set role "${role}" permission for "${module}" to: ${level}`);
     res.json({ data: updated });
   } catch (err) {
     next(err);
@@ -148,6 +159,7 @@ async function resetRolePermission(req, res, next) {
         [`importExportByRole.${role}`]: defaultImportExport,
       },
     });
+    logActivity(req.user, `reset role "${role}" permissions to system defaults`);
     res.json({ data: updated });
   } catch (err) {
     next(err);
@@ -179,6 +191,7 @@ async function updateRoleImportExport(req, res, next) {
     const list = toggleModule(perms.importExportByRole?.[role], module, enabled);
 
     const updated = await setPermissions({ $set: { [`importExportByRole.${role}`]: list } });
+    logActivity(req.user, `${enabled ? 'enabled' : 'disabled'} Import/Export on "${module}" for role "${role}"`);
     res.json({ data: updated });
   } catch (err) {
     next(err);
@@ -210,6 +223,7 @@ async function updateUserImportExportOverride(req, res, next) {
     const updated = await setPermissions({
       $set: { [`userOverrides.${userId}`]: { view, edit, importExport } },
     });
+    logActivity(req.user, `${enabled ? 'enabled' : 'disabled'} Import/Export on "${module}" for ${await userLabel(userId)} (person override)`);
     res.json({ data: updated });
   } catch (err) {
     next(err);
@@ -245,6 +259,7 @@ async function updateUserOverride(req, res, next) {
     const updated = await setPermissions({
       $set: { [`userOverrides.${userId}`]: { view, edit, importExport } },
     });
+    logActivity(req.user, `set permission override for ${await userLabel(userId)} on "${module}" to: ${level}`);
     res.json({ data: updated });
   } catch (err) {
     next(err);
@@ -263,7 +278,33 @@ async function clearUserOverride(req, res, next) {
     }
 
     const updated = await setPermissions({ $unset: { [`userOverrides.${userId}`]: '' } });
+    logActivity(req.user, `cleared permission override for ${await userLabel(userId)} — back to role default`);
     res.json({ data: updated });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function listActivity(req, res, next) {
+  try {
+    const { page, limit, skip } = parsePagination(req.query);
+    const filter = {};
+    if (req.query.module) filter.module = req.query.module;
+    if (req.query.actorId) filter.actorId = req.query.actorId;
+    if (req.query.month && /^\d{4}-\d{2}$/.test(req.query.month)) {
+      const [y, m] = req.query.month.split('-').map(Number);
+      filter.createdAt = { $gte: new Date(y, m - 1, 1), $lt: new Date(y, m, 1) };
+    }
+    if (req.query.search) {
+      const term = req.query.search.trim();
+      filter.$or = regexOr(term, ['actorLabel', 'message']);
+    }
+
+    const [data, totalRowCount] = await Promise.all([
+      ActivityLog.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      ActivityLog.countDocuments(filter),
+    ]);
+    res.json(buildPageResponse(data, totalRowCount, page, limit));
   } catch (err) {
     next(err);
   }
@@ -277,4 +318,5 @@ module.exports = {
   clearUserOverride,
   updateRoleImportExport,
   updateUserImportExportOverride,
+  listActivity,
 };

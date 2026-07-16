@@ -1,11 +1,9 @@
-import { Stack, Title, Tabs, SimpleGrid, Paper, Text } from '@mantine/core';
-import { useSearchParams } from 'react-router-dom';
+import { Stack, Title, SimpleGrid, Paper, Text, Group, ThemeIcon, UnstyledButton } from '@mantine/core';
+import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { BookOpen, Landmark, Receipt, FileSpreadsheet, ScrollText, LineChart } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { fetchSummary } from '../../api/accounting';
-import ChartOfAccountsTab from './ChartOfAccountsTab';
-import ExpensesTab from './ExpensesTab';
-import ChequesTab from './ChequesTab';
 
 function AED(n) {
   return `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -21,23 +19,41 @@ function StatCard({ label, value, sub, color }) {
   );
 }
 
+function SectionCard({ icon: Icon, label, desc, onClick }) {
+  return (
+    <UnstyledButton onClick={onClick}>
+      <Paper withBorder p="md" radius="md" h="100%">
+        <Group>
+          <ThemeIcon variant="filled" size="lg" radius="md"><Icon size={18} /></ThemeIcon>
+          <div>
+            <Text fw={600} size="sm">{label}</Text>
+            <Text size="xs" c="dimmed">{desc}</Text>
+          </div>
+        </Group>
+      </Paper>
+    </UnstyledButton>
+  );
+}
+
+// The section list every child route lives at — matches accounting.* keys in utils/constants.js
+// PERMISSION_TREE. Journal/Reports/COA+Banking each get their own routed page (not a Tabs
+// `?tab=` switch) so period/record drill-downs get real, shareable URLs.
+const SECTIONS = [
+  { permKey: 'accounting.chartOfAccounts', label: 'Chart of Accounts', desc: 'Full ledger tree, add categories', icon: BookOpen, path: '/accounting/chart-of-accounts' },
+  { permKey: 'accounting.chartOfAccounts', label: 'Banking', desc: 'Bank/cash accounts, record transactions', icon: Landmark, path: '/accounting/banking' },
+  { permKey: 'accounting.expenses', label: 'Company Expenses', desc: 'Rent, utilities, salaries, commission', icon: Receipt, path: '/accounting/expenses' },
+  { permKey: 'accounting.cheques', label: 'Cheques', desc: 'Post-dated cheques received/issued', icon: FileSpreadsheet, path: '/accounting/cheques' },
+  { permKey: 'accounting.journal', label: 'Journal Entries', desc: 'Every posting, by month/day', icon: ScrollText, path: '/accounting/journal' },
+  { permKey: 'accounting.reports', label: 'Financial Reports', desc: 'Trial Balance, P&L, Balance Sheet', icon: LineChart, path: '/accounting/reports/trial-balance' },
+];
+
 export default function AccountingPage() {
   const { user } = useAuth();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const canEditCoa = user.editModules?.includes('accounting.chartOfAccounts');
-  const canEditExpenses = user.editModules?.includes('accounting.expenses');
-  const canEditCheques = user.editModules?.includes('accounting.cheques');
-
+  const navigate = useNavigate();
   const summaryQuery = useQuery({ queryKey: ['accounting', 'summary'], queryFn: fetchSummary });
   const s = summaryQuery.data?.data;
 
-  const tabs = [
-    { value: 'coa', label: 'Chart of Accounts', permKey: 'accounting.chartOfAccounts' },
-    { value: 'expenses', label: 'Company Expenses', permKey: 'accounting.expenses' },
-    { value: 'cheques', label: 'Cheques', permKey: 'accounting.cheques' },
-  ].filter((t) => user.modules?.includes(t.permKey));
-
-  const activeTab = tabs.some((t) => t.value === searchParams.get('tab')) ? searchParams.get('tab') : tabs[0]?.value;
+  const sections = SECTIONS.filter((sec) => user.modules?.includes(sec.permKey));
 
   return (
     <Stack>
@@ -50,30 +66,14 @@ export default function AccountingPage() {
         <StatCard label="Bounced Cheques" value={s?.bouncedCheques ?? 0} sub="Needs follow-up" color={s?.bouncedCheques ? 'red' : 'green'} />
       </SimpleGrid>
 
-      {tabs.length === 0 ? (
+      {sections.length === 0 ? (
         <Text c="dimmed" size="sm">You don't have access to any Accounting sections.</Text>
       ) : (
-        <Tabs value={activeTab} onChange={(v) => setSearchParams({ tab: v }, { replace: true })}>
-          <Tabs.List>
-            {tabs.map((t) => <Tabs.Tab key={t.value} value={t.value}>{t.label}</Tabs.Tab>)}
-          </Tabs.List>
-
-          {tabs.some((t) => t.value === 'coa') && (
-            <Tabs.Panel value="coa" pt="md">
-              <ChartOfAccountsTab canEdit={canEditCoa} />
-            </Tabs.Panel>
-          )}
-          {tabs.some((t) => t.value === 'expenses') && (
-            <Tabs.Panel value="expenses" pt="md">
-              <ExpensesTab canEdit={canEditExpenses} />
-            </Tabs.Panel>
-          )}
-          {tabs.some((t) => t.value === 'cheques') && (
-            <Tabs.Panel value="cheques" pt="md">
-              <ChequesTab canEdit={canEditCheques} />
-            </Tabs.Panel>
-          )}
-        </Tabs>
+        <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }}>
+          {sections.map((sec) => (
+            <SectionCard key={sec.path} icon={sec.icon} label={sec.label} desc={sec.desc} onClick={() => navigate(sec.path)} />
+          ))}
+        </SimpleGrid>
       )}
     </Stack>
   );

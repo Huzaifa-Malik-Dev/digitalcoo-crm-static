@@ -6,6 +6,7 @@ const Order = require('../models/Order');
 const User = require('../models/User');
 const { notify } = require('../services/notify');
 const AppError = require('../utils/AppError');
+const { logActivity } = require('../utils/activityLog');
 
 // Builds the "system" side of the conversation - every history entry already recorded on the
 // DSR/Pipeline/Order for this reference number - so the thread reads as one full timeline,
@@ -127,6 +128,7 @@ async function postMessage(req, res, next) {
     );
 
     await notifyThreadRecipients({ dsr, pipeline, order, mentionIds, threadId: thread._id, dsrNo, actor: req.user, summary: text.slice(0, 60) });
+    logActivity(req.user, `posted a message on ${dsrNo}'s conversation: "${text.slice(0, 80)}${text.length > 80 ? '...' : ''}"`);
 
     res.status(201).json({ data: { ok: true } });
   } catch (err) {
@@ -169,6 +171,7 @@ async function postAttachment(req, res, next) {
       dsr, pipeline, order, mentionIds, threadId: thread._id, dsrNo, actor: req.user,
       summary: `shared a file — ${req.file.originalname}`,
     });
+    logActivity(req.user, `attached a file to ${dsrNo}'s conversation: "${req.file.originalname}"`);
 
     res.status(201).json({ data: { ok: true } });
   } catch (err) {

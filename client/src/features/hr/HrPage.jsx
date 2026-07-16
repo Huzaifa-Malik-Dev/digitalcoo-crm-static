@@ -22,7 +22,6 @@ export default function HrPage() {
     { value: 'all', label: 'All Employees', permKey: 'hr.allEmployees' },
     { value: 'active', label: 'Active Employees', permKey: 'hr.activeEmployees' },
     { value: 'team', label: 'Team Assignment', permKey: 'hr.teamAssignment' },
-    { value: 'passport', label: 'Passport Management', permKey: 'hr.passportManagement' },
   ].filter((t) => user.modules?.includes(t.permKey));
 
   // The active tab lives in the URL (not local state) so it survives a full remount - e.g.
@@ -81,13 +80,6 @@ export default function HrPage() {
           {tabs.some((t) => t.value === 'team') && (
             <Tabs.Panel value="team" pt="md">
               <TeamAssignmentTab canEdit={canEdit} />
-            </Tabs.Panel>
-          )}
-          {tabs.some((t) => t.value === 'passport') && (
-            <Tabs.Panel value="passport" pt="md">
-              <Paper withBorder p="md" radius="md">
-                <EmployeeListTab mode="passport" canEdit={canEdit} />
-              </Paper>
             </Tabs.Panel>
           )}
         </Tabs>

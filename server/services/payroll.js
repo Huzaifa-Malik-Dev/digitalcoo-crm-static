@@ -6,8 +6,9 @@ const PayrollLine = require('../models/PayrollLine');
 const CommissionTier = require('../models/CommissionTier');
 const Expense = require('../models/Expense');
 const Account = require('../models/Account');
-const AccountTx = require('../models/AccountTx');
-const { postAccountTx } = require('./accounting');
+const ChartOfAccount = require('../models/ChartOfAccount');
+const JournalEntry = require('../models/JournalEntry');
+const { postJournalEntry, requireCoaByCode, CODES } = require('./journal');
 const AppError = require('../utils/AppError');
 
 // Same "achievement %" concept as MIS (server/controllers/misController.js's buildRollup), but
@@ -105,7 +106,11 @@ async function computePayrollLines(month, skipEmployeeIds = []) {
       const amount = entry.remaining;
       if (amount <= 0) continue;
       deductions += amount;
-      ledgerLines.push({ entryId: entry._id, amount });
+      // Carried through to the run's journal posting: only an advance that was itself posted to
+      // Accounts (postToAccounts) has a receivable on the books to relieve when it's recovered
+      // here — an off-books advance never debited Employee Advances Receivable in the first
+      // place, so settling it can't credit that account either (see processPayrollRun).
+      ledgerLines.push({ entryId: entry._id, amount, postToAccounts: entry.postToAccounts });
     }
 
     const gratuityAccrual = Math.round((basic / 30) * 21 / 12);
@@ -151,7 +156,7 @@ async function processPayrollRun(month, accountId, userId, skipEmployeeIds = [])
 
   // Atomically claim this month BEFORE any side-effecting writes — the unique index on `month`
   // means only one concurrent request can create this doc, so a race can never produce
-  // duplicate Expense/AccountTx/PayrollLine rows for the same month.
+  // duplicate Expense/JournalEntry/PayrollLine rows for the same month.
   let run;
   try {
     run = await PayrollRun.create({ month, account: accountId, expense: null, ...totals, processedBy: userId, skippedEmployees: skipEmployeeIds });
@@ -170,17 +175,59 @@ async function processPayrollRun(month, accountId, userId, skipEmployeeIds = [])
       breakdown: lines.map((l) => ({ employee: l.employee._id, amount: l.netPay, note: `${month} salary` })),
       createdBy: userId,
     });
-    await postAccountTx({
-      account: accountId,
+
+    const bankCoa = await ChartOfAccount.findOne({ linkedAccount: accountId }).lean();
+    if (!bankCoa) throw new AppError('This account has no ledger entry — re-create it', 500);
+    const [salariesCoa, commissionCoa, advancesCoa] = await Promise.all([
+      requireCoaByCode(CODES.SALARIES_EXPENSE),
+      requireCoaByCode(CODES.COMMISSION_EXPENSE),
+      requireCoaByCode(CODES.EMPLOYEE_ADVANCES_RECEIVABLE),
+    ]);
+    const grossSalary = totals.totalBasic + totals.totalAllowance;
+
+    // Only a deduction that itself posted to Accounts when the advance/loan was given has a real
+    // Employee Advances Receivable balance to relieve here. An off-books advance (postToAccounts
+    // false) never debited that account, so recovering it can't credit it either — that portion
+    // instead just reduces the salary/commission expense actually incurred this run.
+    let postedDeductions = 0;
+    let unpostedDeductions = 0;
+    for (const l of lines) {
+      for (const ll of l.ledgerLines) {
+        if (ll.postToAccounts) postedDeductions += ll.amount;
+        else unpostedDeductions += ll.amount;
+      }
+    }
+    let unpostedRemaining = unpostedDeductions;
+    const salariesReduction = Math.min(unpostedRemaining, grossSalary);
+    unpostedRemaining -= salariesReduction;
+    const commissionReduction = Math.min(unpostedRemaining, totals.totalCommission);
+    unpostedRemaining -= commissionReduction;
+    if (unpostedRemaining > 0.01) {
+      throw new AppError(`Off-books deductions (AED ${unpostedDeductions}) exceed this run's total salary + commission — cannot post a balanced journal entry`, 400);
+    }
+    const salariesDebit = grossSalary - salariesReduction;
+    const commissionDebit = totals.totalCommission - commissionReduction;
+
+    // One multi-line entry: gross salary + commission are the real cost, deductions recover part
+    // of it from what employees already owed (not a reduction of the expense itself), and the
+    // rest goes out in cash.
+    const postingLines = [
+      salariesDebit > 0 && { account: salariesCoa._id, debit: salariesDebit, credit: 0, note: `${month} salary` },
+      commissionDebit > 0 && { account: commissionCoa._id, debit: commissionDebit, credit: 0, note: `${month} commission` },
+      postedDeductions > 0 && { account: advancesCoa._id, debit: 0, credit: postedDeductions, note: `${month} advance/loan recovery` },
+      totals.totalNet > 0 && { account: bankCoa._id, debit: 0, credit: totals.totalNet, note: `${month} net pay` },
+    ].filter(Boolean);
+
+    const entry = await postJournalEntry({
       date: new Date().toISOString().slice(0, 10),
-      type: 'Expense',
-      amount: -totals.totalNet,
-      note: `Salaries - Payroll run ${month}`,
-      refType: 'Expense',
+      memo: `Payroll run - ${month}`,
+      refType: 'Payroll',
       refId: expense._id,
-      createdBy: userId,
+      lines: postingLines,
+      actor: { _id: userId },
     });
     run.expense = expense._id;
+    run.journalEntry = entry._id;
     await run.save();
 
     for (const l of lines) {
@@ -249,8 +296,8 @@ async function processPayrollRun(month, accountId, userId, skipEmployeeIds = [])
 
 // Fully undoes a processed run: restores every ledger entry it settled, deletes both the
 // auto-created Deduction rows AND the Salary payout row it recorded (everything tagged with
-// this run's id), deletes the Expense + the AccountTx it posted (so the account balance goes
-// back to what it was before), then deletes the run's lines and the run itself. Nothing is
+// this run's id), deletes the Expense + the JournalEntry it posted (so every account balance
+// goes back to what it was before), then deletes the run's lines and the run itself. Nothing is
 // "reversed with an offsetting entry" here — the user asked to delete a mistaken run outright.
 async function deletePayrollRun(runId) {
   const run = await PayrollRun.findById(runId);
@@ -269,10 +316,8 @@ async function deletePayrollRun(runId) {
   await LedgerEntry.deleteMany({ payrollRun: run._id });
   await PayrollLine.deleteMany({ payrollRun: run._id });
 
-  if (run.expense) {
-    await AccountTx.deleteMany({ refType: 'Expense', refId: run.expense });
-    await Expense.deleteOne({ _id: run.expense });
-  }
+  if (run.journalEntry) await JournalEntry.deleteOne({ _id: run.journalEntry });
+  if (run.expense) await Expense.deleteOne({ _id: run.expense });
 
   await PayrollRun.deleteOne({ _id: run._id });
   return { month: run.month };

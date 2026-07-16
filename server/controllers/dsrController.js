@@ -1,15 +1,30 @@
 const { z } = require('zod');
 const Dsr = require('../models/Dsr');
+const Order = require('../models/Order');
 const User = require('../models/User');
 const { nextSeq } = require('../models/Counter');
 const { parsePagination, buildPageResponse } = require('../utils/pagination');
 const { notify } = require('../services/notify');
 const { CALL_STATUS, NOT_CONNECTED_STATUSES } = require('../utils/constants');
 const { sendXlsx, parseXlsxBuffer, cell, resolveAgentFromRow } = require('../utils/importExport');
+const { regexOr } = require('../utils/search');
 const AppError = require('../utils/AppError');
+const { logActivity, diffFields } = require('../utils/activityLog');
+const { attachIsNew } = require('../services/recordViews');
+
+const DSR_FIELD_LABELS = { date: 'Date', company: 'Company', building: 'Building', contactNo: 'Contact No', email: 'Email', customer: 'Customer', status: 'Status', remarks: 'Remarks' };
 
 function connectedFor(status) {
   return NOT_CONNECTED_STATUSES.includes(status) ? 'NO' : 'YES';
+}
+
+// A DSR stays editable through its whole life in the Sales Pipeline - `convertedToPipeline` flips
+// the instant it enters the pipeline (10%-Prospect), which is too early to lock the original call
+// record. The real cutoff is once the deal is actually sent to Back Office - an Order exists for
+// it (see services/workflow.js ensureOrderForPipeline, fired by TL approval or reaching 100%).
+async function isSentToBackOffice(dsr) {
+  if (!dsr.convertedToPipeline) return false;
+  return Order.exists({ dsrNo: dsr.dsrNo });
 }
 
 // At least 7 digits after stripping formatting - loose enough for local/international UAE
@@ -63,6 +78,23 @@ function scopeFilter(user) {
   };
 }
 
+// Who this user is allowed to log a DSR call for - powers the Agent selector shown to anyone
+// above agent level (see final note on this feature: "any higher employee can also do it").
+// Admin sees everyone active; anyone else sees their own subtree (via managerChain) plus
+// themselves, matching the exact scope `create` already enforces server-side.
+async function loggableEmployees(req, res, next) {
+  try {
+    const filter =
+      req.user.role === 'admin'
+        ? { active: true }
+        : { active: true, $or: [{ _id: req.user._id }, { managerChain: req.user._id }] };
+    const employees = await User.find(filter).select('employeeId name role').sort({ name: 1 }).lean();
+    res.json({ data: employees });
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function list(req, res, next) {
   try {
     const { page, limit, skip, sort } = parsePagination(req.query);
@@ -80,7 +112,7 @@ async function list(req, res, next) {
       filter.$and = [
         {
           $or: [
-            { company: re }, { contactNo: re }, { customer: re }, { dsrNo: re }, { building: re }, { remarks: re },
+            ...regexOr(req.query.search.trim(), ['company', 'contactNo', 'customer', 'dsrNo', 'building', 'remarks', 'status']),
             { agentId: { $in: matchingAgents.map((u) => u._id) } },
           ],
         },
@@ -92,7 +124,14 @@ async function list(req, res, next) {
       Dsr.countDocuments(filter),
     ]);
 
-    res.json(buildPageResponse(data, totalRowCount, page, limit));
+    // See isSentToBackOffice above - batched here instead of per-row to avoid an N+1 query.
+    const convertedDsrNos = data.filter((d) => d.convertedToPipeline).map((d) => d.dsrNo);
+    const sentOrders = convertedDsrNos.length ? await Order.find({ dsrNo: { $in: convertedDsrNos } }).select('dsrNo').lean() : [];
+    const sentSet = new Set(sentOrders.map((o) => o.dsrNo));
+    data.forEach((d) => { d.sentToBackOffice = sentSet.has(d.dsrNo); });
+
+    const withIsNew = await attachIsNew(req.user._id, 'dsr', data);
+    res.json(buildPageResponse(withIsNew, totalRowCount, page, limit));
   } catch (err) {
     next(err);
   }
@@ -130,6 +169,7 @@ async function create(req, res, next) {
 
     if (chain[0]) await notify(chain[0], `New DSR ${dsrNo} by ${agent.name} — ${body.company} (${body.status})`, { refType: 'dsr', refId: dsr._id });
 
+    logActivity(req.user, `logged DSR call ${dsrNo} for agent ${agent.employeeId} — Company: ${body.company}, Status: ${body.status}, Contact: ${body.contactNo}`);
     res.status(201).json({ data: dsr });
   } catch (err) {
     next(err);
@@ -146,14 +186,19 @@ async function updateStatus(req, res, next) {
 
     const allowedToEdit = req.user.role === 'admin' || String(dsr.agentId) === String(req.user._id);
     if (!allowedToEdit) throw new AppError('You cannot edit this DSR', 403);
-    if (dsr.convertedToPipeline) throw new AppError('This DSR has moved to the Sales Pipeline and can no longer be edited here', 400);
+    if (req.user.role !== 'admin' && (await isSentToBackOffice(dsr))) {
+      throw new AppError('This deal has been sent to Back Office — the DSR record can no longer be edited', 400);
+    }
 
+    const before = { status: dsr.status, remarks: dsr.remarks };
     dsr.status = parsed.data.status;
     if (parsed.data.remarks !== undefined) dsr.remarks = parsed.data.remarks;
     dsr.connected = connectedFor(dsr.status);
     dsr.history.push({ userId: req.user._id, text: `Status updated to ${dsr.status}` });
     await dsr.save();
 
+    const changes = diffFields(before, { status: dsr.status, remarks: dsr.remarks }, DSR_FIELD_LABELS);
+    if (changes.length) logActivity(req.user, `updated status on DSR ${dsr.dsrNo}: ${changes.join(', ')}`);
     res.json({ data: dsr });
   } catch (err) {
     next(err);
@@ -170,9 +215,13 @@ async function update(req, res, next) {
 
     const allowedToEdit = req.user.role === 'admin' || String(dsr.agentId) === String(req.user._id);
     if (!allowedToEdit) throw new AppError('You cannot edit this DSR', 403);
-    if (dsr.convertedToPipeline) throw new AppError('This DSR has moved to the Sales Pipeline and can no longer be edited here', 400);
+    if (req.user.role !== 'admin' && (await isSentToBackOffice(dsr))) {
+      throw new AppError('This deal has been sent to Back Office — the DSR record can no longer be edited', 400);
+    }
 
     const fields = parsed.data;
+    const before = {};
+    Object.keys(DSR_FIELD_LABELS).forEach((k) => { before[k] = dsr[k]; });
     Object.assign(dsr, fields);
     if (fields.status) {
       dsr.connected = connectedFor(dsr.status);
@@ -180,6 +229,8 @@ async function update(req, res, next) {
     dsr.history.push({ userId: req.user._id, text: 'DSR record edited' });
     await dsr.save();
 
+    const changes = diffFields(before, dsr.toObject(), DSR_FIELD_LABELS);
+    if (changes.length) logActivity(req.user, `edited DSR ${dsr.dsrNo}: ${changes.join(', ')}`);
     res.json({ data: dsr });
   } catch (err) {
     next(err);
@@ -403,10 +454,11 @@ async function importDsr(req, res, next) {
       )
     );
 
+    logActivity(req.user, `imported DSRs from spreadsheet: ${created} created, ${skipped} skipped (duplicates), ${errors.length} failed, ${rawRows.length} rows total`);
     res.json({ data: { total: rawRows.length, created, skipped, failed: errors.length, errors } });
   } catch (err) {
     next(err);
   }
 }
 
-module.exports = { list, create, updateStatus, update, getOne, exportDsr, importDsr, autocomplete };
+module.exports = { list, create, updateStatus, update, getOne, exportDsr, importDsr, autocomplete, loggableEmployees };

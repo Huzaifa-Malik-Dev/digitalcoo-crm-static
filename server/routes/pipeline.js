@@ -10,6 +10,7 @@ const {
   escalateTl,
   approve,
   reject,
+  requestCorrection,
   exportPipeline,
   importPipeline,
 } = require('../controllers/pipelineController');
@@ -26,5 +27,6 @@ router.patch('/:id', requireModule('pipeline', { edit: true }), update);
 router.post('/:id/escalate-tl', requireModule('pipeline', { edit: true }), escalateTl);
 router.post('/:id/approve', requireModule('pipeline', { edit: true }), requireAction('pipeline.approve'), approve);
 router.post('/:id/reject', requireModule('pipeline', { edit: true }), requireAction('pipeline.approve'), reject);
+router.post('/:id/request-correction', requireModule('pipeline', { edit: true }), requestCorrection);
 
 module.exports = router;

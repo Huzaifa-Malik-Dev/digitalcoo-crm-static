@@ -1,4 +1,4 @@
-import { LayoutDashboard, Phone, Workflow, ClipboardCheck, BarChart3, Users, Wallet, Calculator, Sparkles, Package, Settings } from 'lucide-react';
+import { LayoutDashboard, Phone, Workflow, ClipboardCheck, BarChart3, Users, Wallet, Calculator, Sparkles, Package, Settings, CalendarDays, ClipboardList } from 'lucide-react';
 
 // Labels/icons/routes only — actual access per user comes from /auth/me (server-resolved).
 // `children` (where present) are nested tabs/functionality within that module — each has its
@@ -19,10 +19,10 @@ export const NAV_ITEMS = [
   {
     key: 'hr', label: 'HR', icon: Users, path: '/hr',
     children: [
+      { key: 'hr.dashboard', label: 'Dashboard' },
       { key: 'hr.allEmployees', label: 'All Employees' },
       { key: 'hr.activeEmployees', label: 'Active Employees' },
       { key: 'hr.teamAssignment', label: 'Team Assignment' },
-      { key: 'hr.passportManagement', label: 'Passport Management' },
       { key: 'hr.addEmployee', label: 'Add Employee' },
     ],
   },
@@ -38,19 +38,26 @@ export const NAV_ITEMS = [
   {
     key: 'accounting', label: 'Accounting', icon: Calculator, path: '/accounting',
     children: [
-      { key: 'accounting.chartOfAccounts', label: 'Chart of Accounts' },
+      { key: 'accounting.chartOfAccounts', label: 'Chart of Accounts & Banking' },
       { key: 'accounting.expenses', label: 'Company Expenses' },
       { key: 'accounting.cheques', label: 'Cheques' },
+      { key: 'accounting.journal', label: 'Journal Entries' },
+      { key: 'accounting.reports', label: 'Financial Reports' },
     ],
+  },
+  {
+    key: 'leave', label: 'Leave', icon: CalendarDays, path: '/leave',
+    children: [
+      { key: 'leave.approve', label: 'Approve / Reject Team Leave' },
+      { key: 'leave.settings', label: 'Leave Types & Holidays' },
+    ],
+  },
+  {
+    key: 'attendance', label: 'Attendance', icon: ClipboardList, path: '/attendance',
+    children: [{ key: 'attendance.manage', label: 'Mark Attendance (HR/Admin)' }],
   },
   { key: 'ai', label: 'AI Reports', icon: Sparkles, path: '/ai' },
-  {
-    key: 'products', label: 'Products & Segments', icon: Package, path: '/products',
-    children: [
-      { key: 'products.products', label: 'Products' },
-      { key: 'products.segments', label: 'Segments' },
-    ],
-  },
+  { key: 'products', label: 'Products', icon: Package, path: '/products' },
   { key: 'admin', label: 'Admin / Settings', icon: Settings, path: '/admin' },
 ];
 

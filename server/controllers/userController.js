@@ -9,10 +9,18 @@ const { hashPassword } = require('../utils/password');
 const { parsePagination, buildPageResponse } = require('../utils/pagination');
 const { buildManagerChain, createInitialAssignment, reassignUser } = require('../services/hierarchy');
 const { ROLES } = require('../utils/constants');
+const { regexOr } = require('../utils/search');
 const { buildWorkbook, parseXlsxBuffer, cell } = require('../utils/importExport');
 const { uploadDir } = require('../config/env');
 const AppError = require('../utils/AppError');
 const { nextSeq } = require('../models/Counter');
+const { logActivity, diffFields, describeFields } = require('../utils/activityLog');
+
+const EMPLOYEE_FIELD_LABELS = {
+  name: 'Name', arabicName: 'Arabic Name', email: 'Email', phone: 'Phone', desig: 'Designation',
+  dept: 'Department', target: 'Target', salary: 'Salary', payType: 'Pay Type', join: 'Join Date', status: 'Status',
+};
+const CREATE_DETAIL_LABELS = { role: 'Role', desig: 'Designation', dept: 'Department', payType: 'Pay Type', target: 'Target', salary: 'Salary' };
 
 // Explicit allowlist for PATCH /users/:id — role/reportsTo/password go through their own
 // handling below; everything else (passwordHash, employeeId, username, managerChain, docs,
@@ -62,10 +70,19 @@ const createSchema = z.object({
   compliance: complianceUpdateSchema.optional().default({}),
 });
 
-const reassignSchema = z.object({
-  role: z.enum(Object.keys(ROLES)).optional(),
-  reportsTo: z.string().nullable().optional(),
-});
+const reassignSchema = z
+  .object({
+    role: z.enum(Object.keys(ROLES)).optional(),
+    reportsTo: z.string().nullable().optional(),
+    // Required only when reportsTo is actually present in the request - a pure role change
+    // doesn't move anyone's team, so there's nothing to date. See reassignUser for the
+    // today-or-earlier + not-before-current-assignment-started validation.
+    effectiveDate: z.string().optional(),
+  })
+  .refine((v) => v.reportsTo === undefined || !!v.effectiveDate, {
+    message: 'Assignment date is required when changing an employee\'s team',
+    path: ['effectiveDate'],
+  });
 
 const STATUS_VALUES = ['Active', 'Inactive', 'Frozen', 'Absconding'];
 
@@ -91,8 +108,14 @@ async function list(req, res, next) {
     if (req.query.role) filter.role = req.query.role;
     if (req.query.active !== undefined) filter.active = req.query.active === 'true';
     if (req.query.search) {
-      const re = new RegExp(req.query.search.trim(), 'i');
-      filter.$or = [{ name: re }, { username: re }, { email: re }, { employeeId: re }];
+      const term = req.query.search.trim();
+      const matchingRoleKeys = Object.entries(ROLES)
+        .filter(([, label]) => label.toLowerCase().includes(term.toLowerCase()))
+        .map(([key]) => key);
+      filter.$or = [
+        ...regexOr(term, ['name', 'username', 'email', 'employeeId', 'desig', 'dept', 'role']),
+        ...(matchingRoleKeys.length ? [{ role: { $in: matchingRoleKeys } }] : []),
+      ];
     }
 
     const [data, totalRowCount] = await Promise.all([
@@ -154,6 +177,7 @@ async function create(req, res, next) {
 
     await createInitialAssignment(user, req.user._id);
 
+    logActivity(req.user, `added employee ${user.employeeId} (${user.name}) — ${describeFields(user, CREATE_DETAIL_LABELS)}`);
     const { passwordHash: _drop, ...safe } = user.toObject();
     res.status(201).json({ data: safe });
   } catch (err) {
@@ -165,11 +189,14 @@ async function create(req, res, next) {
 // Other profile fields (name, desig, salary, compliance, etc.) are plain field updates.
 async function update(req, res, next) {
   try {
-    const { role, reportsTo, password } = req.body;
+    const { role, reportsTo, effectiveDate, password } = req.body;
     const parsedRest = updateFieldsSchema.safeParse(req.body);
     if (!parsedRest.success) throw new AppError(parsedRest.error.issues[0].message, 400);
     const rest = parsedRest.data;
     const isSelf = String(req.params.id) === String(req.user._id);
+
+    const before = await User.findById(req.params.id).select('employeeId name role reportsTo ' + Object.keys(EMPLOYEE_FIELD_LABELS).join(' ')).lean();
+    if (!before) throw new AppError('User not found', 404);
 
     // Nobody can revoke their own access — a demoted/deactivated self could lock the
     // system out of having anyone left to fix it. Someone else (another admin/HR) must do it.
@@ -183,9 +210,18 @@ async function update(req, res, next) {
     }
 
     if (role !== undefined || reportsTo !== undefined) {
-      const parsed = reassignSchema.safeParse({ role, reportsTo });
+      const parsed = reassignSchema.safeParse({ role, reportsTo, effectiveDate });
       if (!parsed.success) throw new AppError(parsed.error.issues[0].message, 400);
-      await reassignUser(req.params.id, parsed.data, req.user._id);
+      const { movedCounts } = await reassignUser(req.params.id, parsed.data, req.user._id);
+      if (role !== undefined && role !== before.role) {
+        logActivity(req.user, `changed employee ${before.employeeId} (${before.name})'s role: ${before.role} -> ${role}`);
+      }
+      if (reportsTo !== undefined && String(reportsTo || '') !== String(before.reportsTo || '')) {
+        logActivity(
+          req.user,
+          `reassigned employee ${before.employeeId} (${before.name}) to a new manager effective ${parsed.data.effectiveDate} — moved ${movedCounts.dsr} DSR, ${movedCounts.pipeline} pipeline, ${movedCounts.order} order, ${movedCounts.leave} leave, ${movedCounts.attendance} attendance record(s)`
+        );
+      }
     }
 
     if (password) rest.passwordHash = await hashPassword(password);
@@ -194,6 +230,10 @@ async function update(req, res, next) {
 
     const user = await User.findByIdAndUpdate(req.params.id, rest, { new: true }).select('-passwordHash');
     if (!user) throw new AppError('User not found', 404);
+
+    const changes = diffFields(before, user.toObject(), EMPLOYEE_FIELD_LABELS);
+    if (changes.length) logActivity(req.user, `edited employee ${before.employeeId} (${before.name}): ${changes.join(', ')}`);
+    if (password) logActivity(req.user, `reset employee ${before.employeeId} (${before.name})'s password`);
     res.json({ data: user });
   } catch (err) {
     next(err);
@@ -228,6 +268,7 @@ async function uploadDoc(req, res, next) {
     user.docs[field] = `/uploads/${req.file.filename}`;
     await user.save();
 
+    logActivity(req.user, `uploaded ${field} document for employee ${user.employeeId} (${user.name})`);
     res.json({ data: { field, path: user.docs[field] } });
   } catch (err) {
     next(err);
@@ -403,6 +444,7 @@ async function importEmployees(req, res, next) {
       }
     }
 
+    logActivity(req.user, `imported employee updates from ZIP: ${updated} updated, ${skipped} skipped, ${errors.length} failed, ${rawRows.length} rows total`);
     res.json({ data: { total: rawRows.length, updated, skipped, failed: errors.length, errors } });
   } catch (err) {
     next(err);
@@ -410,13 +452,15 @@ async function importEmployees(req, res, next) {
 }
 
 // Doc types tracked for expiry health — key/label drive the HR Dashboard tiles, field is the
-// compliance.* expiry column each one reads from.
+// compliance.* expiry column each one reads from. noField/issueField (where the schema has them)
+// feed the detail page so it's a real record (document number, issue date), not just a name and
+// a date.
 const EXPIRY_CATEGORIES = [
-  { key: 'passport', label: 'Passport', field: 'passportExpiry' },
-  { key: 'visa', label: 'Visa', field: 'visaExpiry' },
-  { key: 'eid', label: 'Emirates ID', field: 'eidExpiry' },
-  { key: 'labourCard', label: 'Labour Card (MOHRE)', field: 'labourCardExpiry' },
-  { key: 'insurance', label: 'Insurance', field: 'insuranceExpiry' },
+  { key: 'passport', label: 'Passport', field: 'passportExpiry', noField: 'passportNo' },
+  { key: 'visa', label: 'Visa', field: 'visaExpiry', noField: 'visaFileNumber', issueField: 'visaIssue' },
+  { key: 'eid', label: 'Emirates ID', field: 'eidExpiry', noField: 'eid', issueField: 'eidIssue' },
+  { key: 'labourCard', label: 'Labour Card (MOHRE)', field: 'labourCardExpiry', noField: 'labourCardNo', issueField: 'labourCardIssue' },
+  { key: 'insurance', label: 'Insurance', field: 'insuranceExpiry', issueField: 'insuranceIssue' },
 ];
 
 // Mirrors client/src/features/hr/docHealth.js's 30-day "expiring soon" threshold — kept in sync
@@ -436,20 +480,25 @@ function healthLevel(expiry, today, in30Str) {
 // find + in-memory group is simpler and just as fast as an aggregation pipeline.
 async function complianceSummary(req, res, next) {
   try {
-    const users = await User.find({}).select('employeeId name compliance').lean();
+    const users = await User.find({}).select('employeeId name desig dept role active compliance').lean();
 
     const today = new Date().toISOString().slice(0, 10);
     const in30 = new Date();
     in30.setDate(in30.getDate() + 30);
     const in30Str = in30.toISOString().slice(0, 10);
 
-    const categories = EXPIRY_CATEGORIES.map(({ key, label, field }) => {
+    const categories = EXPIRY_CATEGORIES.map(({ key, label, field, noField, issueField }) => {
       const expired = [];
       const expiring = [];
       users.forEach((u) => {
         const expiry = u.compliance?.[field];
         const level = healthLevel(expiry, today, in30Str);
-        const entry = { _id: u._id, employeeId: u.employeeId, name: u.name, expiry };
+        const entry = {
+          _id: u._id, employeeId: u.employeeId, name: u.name, expiry,
+          desig: u.desig, dept: u.dept, role: u.role, active: u.active,
+          docNo: noField ? u.compliance?.[noField] : undefined,
+          issueDate: issueField ? u.compliance?.[issueField] : undefined,
+        };
         if (level === 'expired') expired.push(entry);
         else if (level === 'expiring') expiring.push(entry);
       });

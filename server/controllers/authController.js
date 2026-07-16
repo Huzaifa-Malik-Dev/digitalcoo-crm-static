@@ -6,6 +6,7 @@ const { nodeEnv } = require('../config/env');
 const AppError = require('../utils/AppError');
 const { ALL_PERMISSION_KEYS, IMPORT_EXPORT_MODULES } = require('../utils/constants');
 const { canView, canEdit, canImportExport } = require('../services/permissions');
+const { logActivity } = require('../utils/activityLog');
 
 const loginSchema = z.object({
   username: z.string().trim().min(1),
@@ -53,6 +54,7 @@ async function login(req, res, next) {
 
     const token = signToken(user._id, user.tokenVersion || 0);
     res.cookie('token', token, COOKIE_OPTS);
+    logActivity(user, 'logged in');
     res.json({ user: publicUser(user) });
   } catch (err) {
     next(err);
@@ -65,6 +67,7 @@ async function logout(req, res, next) {
     // a copy captured before logout can no longer be replayed.
     await User.updateOne({ _id: req.user._id }, { $inc: { tokenVersion: 1 } });
     res.clearCookie('token', { ...COOKIE_OPTS, maxAge: undefined });
+    logActivity(req.user, 'logged out');
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -111,7 +114,9 @@ async function updateProfile(req, res, next) {
     if (newPassword) {
       const token = signToken(user._id, user.tokenVersion);
       res.cookie('token', token, COOKIE_OPTS);
+      logActivity(user, 'changed their own password');
     }
+    if (name !== undefined) logActivity(user, `updated their own display name to "${name}"`);
 
     res.json({ user: publicUser(user) });
   } catch (err) {

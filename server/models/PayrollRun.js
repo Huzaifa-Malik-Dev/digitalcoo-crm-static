@@ -5,6 +5,7 @@ const payrollRunSchema = new mongoose.Schema(
     month: { type: String, required: true, unique: true }, // 'YYYY-MM'
     account: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', required: true },
     expense: { type: mongoose.Schema.Types.ObjectId, ref: 'Expense', default: null },
+    journalEntry: { type: mongoose.Schema.Types.ObjectId, ref: 'JournalEntry', default: null },
     totalBasic: { type: Number, default: 0 },
     totalAllowance: { type: Number, default: 0 },
     totalCommission: { type: Number, default: 0 },

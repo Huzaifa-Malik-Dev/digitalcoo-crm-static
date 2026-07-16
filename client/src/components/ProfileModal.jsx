@@ -58,7 +58,7 @@ export default function ProfileModal({ opened, onClose }) {
 
   return (
     <Modal opened={opened} onClose={handleClose} title="My Profile" size="sm">
-      <Stack gap="lg">
+      <Stack gap="lg" mt="xs">
         <Stack gap="xs">
           <Text size="xs" fw={600} c="dimmed" tt="uppercase">Username</Text>
           <TextInput value={user?.username || ''} readOnly disabled />
@@ -71,7 +71,13 @@ export default function ProfileModal({ opened, onClose }) {
             <Text size="xs" fw={600} c="dimmed" tt="uppercase">Display Name</Text>
             <TextInput leftSection={<User size={16} />} {...nameForm.getInputProps('name')} />
             <Group justify="flex-end">
-              <Button type="submit" size="xs" loading={saving} disabled={nameForm.values.name === user?.name || !nameForm.values.name.trim()}>
+              <Button
+                type="submit"
+                size="xs"
+                variant="light"
+                loading={saving}
+                disabled={nameForm.values.name === user?.name || !nameForm.values.name.trim()}
+              >
                 Save Name
               </Button>
             </Group>

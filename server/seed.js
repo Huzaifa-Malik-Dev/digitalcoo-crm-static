@@ -12,17 +12,23 @@ const Notification = require('./models/Notification');
 const AssignmentHistory = require('./models/AssignmentHistory');
 const Permission = require('./models/Permission');
 const Account = require('./models/Account');
-const AccountTx = require('./models/AccountTx');
+const ChartOfAccount = require('./models/ChartOfAccount');
+const JournalEntry = require('./models/JournalEntry');
 const Cheque = require('./models/Cheque');
 const Expense = require('./models/Expense');
 const LedgerEntry = require('./models/LedgerEntry');
 const PayrollRun = require('./models/PayrollRun');
 const PayrollLine = require('./models/PayrollLine');
-const Segment = require('./models/Segment');
 const Product = require('./models/Product');
+const LeaveType = require('./models/LeaveType');
+const Holiday = require('./models/Holiday');
+const LeaveRequest = require('./models/LeaveRequest');
+const Attendance = require('./models/Attendance');
+const ActivityLog = require('./models/ActivityLog');
 const { Counter, nextSeq } = require('./models/Counter');
-const { postAccountTx } = require('./services/accounting');
+const { seedChartOfAccounts, ensureLinkedAccount, postJournalEntry, requireCoaByCode, CODES, EXPENSE_CATEGORY_TO_CODE } = require('./services/journal');
 const { processPayrollRun } = require('./services/payroll');
+const { createLeaveRequest, approveLeaveRequest } = require('./services/leave');
 
 const { hashPassword } = require('./utils/password');
 const { buildManagerChain, createInitialAssignment } = require('./services/hierarchy');
@@ -85,14 +91,19 @@ async function run() {
     Permission.deleteMany({}),
     Counter.deleteMany({}),
     Account.deleteMany({}),
-    AccountTx.deleteMany({}),
+    ChartOfAccount.deleteMany({}),
+    JournalEntry.deleteMany({}),
     Cheque.deleteMany({}),
     Expense.deleteMany({}),
     LedgerEntry.deleteMany({}),
     PayrollRun.deleteMany({}),
     PayrollLine.deleteMany({}),
-    Segment.deleteMany({}),
     Product.deleteMany({}),
+    LeaveType.deleteMany({}),
+    Holiday.deleteMany({}),
+    LeaveRequest.deleteMany({}),
+    Attendance.deleteMany({}),
+    ActivityLog.deleteMany({}),
   ]);
 
   console.log('Seeding permissions...');
@@ -130,7 +141,7 @@ async function run() {
   const remarksPool = ['Using etisalat already', 'He is busy, call later', 'Interested in 3 SIM cards', 'Wants data plan 30GB', 'Voicemail left', 'Asked to send proposal', 'Number not in use', 'Already with DU wireless'];
   const customers = ['Mr Ali', 'Anjlika', 'Usman', 'Eylan', 'Neha', 'Akbar'];
 
-  const interestedDsrs = [];
+  const leadGeneratedDsrs = [];
   const total = 300;
   for (let i = 0; i < total; i += 1) {
     const agent = agents[i % agents.length];
@@ -155,21 +166,34 @@ async function run() {
       connected: ['No answer', 'Voicemail', 'Number not in use'].includes(status) ? 'NO' : 'YES',
       history: [{ userId: agent._id, text: `DSR created · status set to ${status}` }],
     });
-    if (status === 'Interested') interestedDsrs.push(dsr);
+    if (status === 'Lead Generated') leadGeneratedDsrs.push(dsr);
   }
 
-  console.log(`Seeding pipeline from ${interestedDsrs.length} interested DSRs...`);
+  console.log(`Seeding pipeline from ${leadGeneratedDsrs.length} lead-generated DSRs...`);
   const products = [
     { cat: 'Business Internet', product: 'Business First Plus', price: 395 },
     { cat: 'Mobile', product: 'SOHO3', price: 150 },
     { cat: 'Business Internet', product: 'Business Extreme', price: 600 },
   ];
+  // Deal detail fields beyond cat/product/price/qty are all mandatory to save a Pipeline record
+  // (see pipelineController.updateSchema) - fill them in here so seeded deals are immediately
+  // eligible for the escalate/approve calls below, matching what a real agent would have to do
+  // on the deal panel before requesting Team Leader approval.
+  const SR_TYPES = ['MNP', 'FNP', 'NEW'];
   const pipelines = [];
-  for (let i = 0; i < interestedDsrs.length; i += 1) {
-    const dsr = interestedDsrs[i];
+  for (let i = 0; i < leadGeneratedDsrs.length; i += 1) {
+    const dsr = leadGeneratedDsrs[i];
     const agent = agents.find((a) => String(a._id) === String(dsr.agentId));
     const pr = products[i % products.length];
-    const pipeline = await convertToPipeline(dsr._id, { cat: pr.cat, product: pr.product, price: pr.price, qty: 1 + (i % 4) }, agent);
+    const pipeline = await convertToPipeline(
+      dsr._id,
+      {
+        cat: pr.cat, product: pr.product, price: pr.price, qty: 1 + (i % 4),
+        sr: SR_TYPES[i % SR_TYPES.length], email: `${agent.username}@example.com`, remarks: 'Seed demo deal',
+      },
+      agent
+    );
+    await Pipeline.updateOne({ _id: pipeline._id }, { expectedCloseDate: '2026-08-15' });
     pipelines.push(pipeline);
   }
 
@@ -208,21 +232,36 @@ async function run() {
   }
 
   console.log('Seeding chart of accounts...');
+  await seedChartOfAccounts();
   const bank = await Account.create({ name: 'Main Bank Account - ADCB', type: 'Bank', opening: 50000, createdBy: admin._id });
   const cash = await Account.create({ name: 'Petty Cash', type: 'Cash', opening: 5000, createdBy: admin._id });
+  // Creates the linked Cash & Bank leaf + posts each account's opening-balance entry —
+  // same call accountingController.createAccount makes for a real request.
+  const bankCoa = await ensureLinkedAccount(bank, admin);
+  await ensureLinkedAccount(cash, admin);
 
   console.log('Seeding sample expenses (each debits one account)...');
   const rentExpense = await Expense.create({
     category: 'Rent', amount: 18000, date: '2026-06-05', account: bank._id,
     note: 'Office Rent - Business Bay', createdBy: admin._id,
   });
-  await postAccountTx({ account: bank._id, date: '2026-06-05', type: 'Expense', amount: -18000, note: 'Rent - Office Rent - Business Bay', refType: 'Expense', refId: rentExpense._id, createdBy: admin._id });
+  const rentCoa = await requireCoaByCode(EXPENSE_CATEGORY_TO_CODE.Rent);
+  await postJournalEntry({
+    date: '2026-06-05', memo: 'Rent - Office Rent - Business Bay', refType: 'Expense', refId: rentExpense._id,
+    lines: [{ account: rentCoa._id, debit: 18000, credit: 0 }, { account: bankCoa._id, debit: 0, credit: 18000 }],
+    actor: admin,
+  });
 
   const utilExpense = await Expense.create({
     category: 'Utilities', amount: 3200, date: '2026-06-10', account: bank._id,
     note: 'Telecom & Internet', createdBy: admin._id,
   });
-  await postAccountTx({ account: bank._id, date: '2026-06-10', type: 'Expense', amount: -3200, note: 'Utilities - Telecom & Internet', refType: 'Expense', refId: utilExpense._id, createdBy: admin._id });
+  const utilCoa = await requireCoaByCode(EXPENSE_CATEGORY_TO_CODE.Utilities);
+  await postJournalEntry({
+    date: '2026-06-10', memo: 'Utilities - Telecom & Internet', refType: 'Expense', refId: utilExpense._id,
+    lines: [{ account: utilCoa._id, debit: 3200, credit: 0 }, { account: bankCoa._id, debit: 0, credit: 3200 }],
+    actor: admin,
+  });
 
   console.log('Seeding employee ledger (advance) ahead of the payroll run...');
   await LedgerEntry.create({
@@ -234,14 +273,28 @@ async function run() {
   await processPayrollRun('2026-06', bank._id, admin._id);
 
   console.log('Seeding cheques (PDC)...');
-  await Cheque.create({ no: '000123', date: '2026-06-01', dueDate: '2026-07-15', direction: 'Received', party: 'Livendo Properties', amount: 12000, account: bank._id, status: 'Pending', note: 'Advance payment for annual contract', createdBy: admin._id });
-  await Cheque.create({ no: '000456', date: '2026-06-05', dueDate: '2026-07-01', direction: 'Issued', party: 'Business Bay Landlord', amount: 18000, account: bank._id, status: 'Deposited', note: 'July office rent', createdBy: admin._id });
-  const clearedCheque = await Cheque.create({ no: '000789', date: '2026-05-01', dueDate: '2026-06-01', direction: 'Received', party: 'Sky & Sea Intl', amount: 9500, account: bank._id, status: 'Cleared', note: 'Order settlement', createdBy: admin._id });
-  await postAccountTx({ account: bank._id, date: '2026-06-01', type: 'Cheque Clearance', amount: 9500, note: `Cheque ${clearedCheque.no} (${clearedCheque.party}) cleared`, refType: 'Cheque', refId: clearedCheque._id, createdBy: admin._id });
-  await Cheque.create({ no: '000321', date: '2026-05-10', dueDate: '2026-06-10', direction: 'Issued', party: 'IT Vendor - Laptops', amount: 7200, account: cash._id, status: 'Bounced', note: 'Insufficient funds - follow up required', createdBy: admin._id });
+  const arCoa = await requireCoaByCode(CODES.ACCOUNTS_RECEIVABLE);
+  const apCoa = await requireCoaByCode(CODES.ACCOUNTS_PAYABLE);
+  await Cheque.create({ no: '000123', date: '2026-06-01', dueDate: '2026-07-15', direction: 'Received', party: 'Livendo Properties', amount: 12000, account: bank._id, contraAccount: arCoa._id, status: 'Pending', note: 'Advance payment for annual contract', createdBy: admin._id });
+  await Cheque.create({ no: '000456', date: '2026-06-05', dueDate: '2026-07-01', direction: 'Issued', party: 'Business Bay Landlord', amount: 18000, account: bank._id, contraAccount: apCoa._id, status: 'Deposited', note: 'July office rent', createdBy: admin._id });
+  const clearedCheque = await Cheque.create({ no: '000789', date: '2026-05-01', dueDate: '2026-06-01', direction: 'Received', party: 'Sky & Sea Intl', amount: 9500, account: bank._id, contraAccount: arCoa._id, status: 'Cleared', note: 'Order settlement', createdBy: admin._id });
+  await postJournalEntry({
+    date: '2026-06-01', memo: `Cheque ${clearedCheque.no} (${clearedCheque.party}) cleared`, refType: 'Cheque', refId: clearedCheque._id,
+    lines: [{ account: bankCoa._id, debit: 9500, credit: 0 }, { account: arCoa._id, debit: 0, credit: 9500 }],
+    actor: admin,
+  });
+  await Cheque.create({ no: '000321', date: '2026-05-10', dueDate: '2026-06-10', direction: 'Issued', party: 'IT Vendor - Laptops', amount: 7200, account: cash._id, contraAccount: apCoa._id, status: 'Bounced', note: 'Insufficient funds - follow up required', createdBy: admin._id });
 
-  console.log('Seeding segments...');
-  const telecomSegment = await Segment.create({ name: 'e& Telecom', description: 'Core e& Authorised Channel Partner business', active: true });
+  console.log('Seeding a sample manual journal entry (Etisalat commission revenue, recorded by hand)...');
+  const commissionRevenueCoa = await requireCoaByCode('4100');
+  await postJournalEntry({
+    date: '2026-06-20',
+    memo: 'e& commission — June activations',
+    refType: 'Manual',
+    refId: null,
+    lines: [{ account: arCoa._id, debit: 4200, credit: 0 }, { account: commissionRevenueCoa._id, debit: 0, credit: 4200 }],
+    actor: admin,
+  });
 
   console.log('Seeding product catalog...');
   const catalog = [
@@ -279,15 +332,52 @@ async function run() {
     { cat: 'Digital', title: 'Cloud' },
     { cat: 'Digital', title: 'SMS' },
   ];
-  const basePriceByCat = { Fixed: 300, Mobile: 150, Digital: 200 };
   await Product.insertMany(
-    catalog.map((p, i) => ({
+    catalog.map((p) => ({
       cat: p.cat,
       title: p.title,
-      segmentId: telecomSegment._id,
-      price: basePriceByCat[p.cat] + (i % 6) * 50,
       active: true,
     }))
+  );
+
+  console.log('Seeding leave types...');
+  const leaveTypes = await LeaveType.insertMany([
+    { name: 'Annual Leave', annualDays: 30, accrualMethod: 'monthly', minServiceMonths: 6, paid: true, requiresDocument: false, isSystem: true, createdBy: admin._id },
+    { name: 'Sick Leave', annualDays: 90, accrualMethod: 'lump-sum', minServiceMonths: 0, paid: true, requiresDocument: true, isSystem: true, createdBy: admin._id },
+    { name: 'Emergency Leave', annualDays: 5, accrualMethod: 'lump-sum', minServiceMonths: 0, paid: true, requiresDocument: false, isSystem: true, createdBy: admin._id },
+    { name: 'Unpaid Leave', annualDays: 365, accrualMethod: 'lump-sum', minServiceMonths: 0, paid: false, requiresDocument: false, isSystem: true, createdBy: admin._id },
+  ]);
+  const annualLeave = leaveTypes.find((t) => t.name === 'Annual Leave');
+  const sickLeave = leaveTypes.find((t) => t.name === 'Sick Leave');
+
+  console.log('Seeding 2026 UAE public holidays...');
+  await Holiday.insertMany([
+    { name: "New Year's Day", date: '2026-01-01', createdBy: admin._id },
+    { name: 'Eid al-Fitr (est.)', date: '2026-03-20', createdBy: admin._id },
+    { name: 'Eid al-Fitr Holiday', date: '2026-03-21', createdBy: admin._id },
+    { name: 'Arafat Day (est.)', date: '2026-05-26', createdBy: admin._id },
+    { name: 'Eid al-Adha (est.)', date: '2026-05-27', createdBy: admin._id },
+    { name: 'Islamic New Year (est.)', date: '2026-06-16', createdBy: admin._id },
+    { name: 'Commemoration Day', date: '2026-12-01', createdBy: admin._id },
+    { name: 'UAE National Day', date: '2026-12-02', createdBy: admin._id },
+    { name: 'UAE National Day Holiday', date: '2026-12-03', createdBy: admin._id },
+  ]);
+
+  console.log('Seeding sample leave requests...');
+  // Samjith joined 2025-09-01 — well past the 6-month Annual Leave threshold by demo "today".
+  const approvedReq = await createLeaveRequest(
+    samjith._id,
+    { leaveTypeId: annualLeave._id, startDate: '2026-06-08', endDate: '2026-06-10', reason: 'Family trip' },
+    admin
+  );
+  await approveLeaveRequest(approvedReq._id, sana);
+
+  // OB joined 2025-11-10 — also past the threshold; left pending so the Approvals queue demo has
+  // something in it, and Sick Leave (no minServiceMonths gate) shows immediate eligibility.
+  await createLeaveRequest(
+    ob._id,
+    { leaveTypeId: sickLeave._id, startDate: '2026-07-20', endDate: '2026-07-21', reason: 'Doctor follow-up', document: '' },
+    ob
   );
 
   console.log(`Seed complete: ${agents.length + 6 + 3} users, ${total} DSR records, ${pipelines.length} pipeline deals, ${orderCount} orders, ${catalog.length} products.`);

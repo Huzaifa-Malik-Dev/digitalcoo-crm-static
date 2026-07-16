@@ -13,10 +13,14 @@ export function usePagedList(queryKeyBase, fetchFn, { filters = {} } = {}) {
   const [limit, setLimit] = useState(DEFAULT_LIMIT);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
+  // TanStack sorting-state shape ([{id, desc}]), single-column only - matches the backend's
+  // single-field `sort`/`-sort` query param (server/utils/pagination.js).
+  const [sorting, setSorting] = useState([]);
+  const sort = sorting.length ? (sorting[0].desc ? `-${sorting[0].id}` : sorting[0].id) : undefined;
 
   const query = useQuery({
-    queryKey: [...queryKeyBase, { page, limit, search: debouncedSearch, ...filters }],
-    queryFn: () => fetchFn({ page, limit, search: debouncedSearch || undefined, ...filters }),
+    queryKey: [...queryKeyBase, { page, limit, search: debouncedSearch, sort, ...filters }],
+    queryFn: () => fetchFn({ page, limit, search: debouncedSearch || undefined, sort, ...filters }),
     placeholderData: keepPreviousData,
   });
 
@@ -34,6 +38,11 @@ export function usePagedList(queryKeyBase, fetchFn, { filters = {} } = {}) {
     setPage(1);
   };
 
+  const onSortingChange = (updater) => {
+    setSorting(updater);
+    setPage(1);
+  };
+
   return {
     data: query.data?.data || [],
     totalRowCount: query.data?.meta?.totalRowCount || 0,
@@ -42,8 +51,10 @@ export function usePagedList(queryKeyBase, fetchFn, { filters = {} } = {}) {
     page,
     limit,
     search,
+    sorting,
     onPageChange,
     onSearchChange,
+    onSortingChange,
     refetch: query.refetch,
   };
 }

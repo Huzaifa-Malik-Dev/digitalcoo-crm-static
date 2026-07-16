@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Stack, Title, Group, Button, Paper, Table, Progress, Text, TextInput, Loader, Center } from '@mantine/core';
+import { Stack, Title, Button, Paper, Table, Progress, Text, Loader, Center, Group } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { Upload } from 'lucide-react';
 import { fetchMisRollup, misExportUrl } from '../../api/mis';
+import MonthInput from '../../components/MonthInput';
+import PageToolbar from '../../components/PageToolbar';
 
 function AED(n) {
   return `AED ${Number(n || 0).toLocaleString()}`;
@@ -29,18 +31,18 @@ export default function MisPage() {
 
   return (
     <Stack>
-      <Group justify="space-between">
-        <Title order={1} size="h3">MIS & Targets</Title>
-        <Group gap="sm">
-          <TextInput type="month" value={month} onChange={(e) => setMonth(e.currentTarget.value)} placeholder="All time" w={160} />
-          <Button leftSection={<Upload size={16} />} variant="light" component="a" href={misExportUrl(month)} target="_blank" rel="noreferrer">
-            Export CSV
-          </Button>
-        </Group>
-      </Group>
-      <Text c="dimmed" size="sm">
-        {month ? `Showing ${month}` : 'Showing lifetime totals — pick a month above to filter'} · Click a row to see their performance detail.
-      </Text>
+      <PageToolbar
+        title={<Title order={1} size="h3">MIS & Targets</Title>}
+        subtitle={`${month ? `Showing ${month}` : 'Showing lifetime totals — pick a month above to filter'} · Click a row to see their performance detail.`}
+        actions={
+          <>
+            <MonthInput value={month} onChange={setMonth} placeholder="All time" w={160} />
+            <Button leftSection={<Upload size={16} />} variant="light" component="a" href={misExportUrl(month)} target="_blank" rel="noreferrer">
+              Export CSV
+            </Button>
+          </>
+        }
+      />
 
       <Paper withBorder p="md" radius="md">
         {isLoading ? (
@@ -55,15 +57,16 @@ export default function MisPage() {
                   <Table.Th>Submissions</Table.Th>
                   <Table.Th>Interested</Table.Th>
                   <Table.Th>Pipeline</Table.Th>
-                  <Table.Th>Activated Orders</Table.Th>
-                  <Table.Th>Achieved</Table.Th>
+                  <Table.Th>Activated Deals</Table.Th>
+                  <Table.Th>MRC Achieved</Table.Th>
                   <Table.Th>Achievement</Table.Th>
+                  <Table.Th>Corrections</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
                 {rows.length === 0 ? (
                   <Table.Tr>
-                    <Table.Td colSpan={8}><Center py="xl"><Text c="dimmed">No agents in scope</Text></Center></Table.Td>
+                    <Table.Td colSpan={9}><Center py="xl"><Text c="dimmed">No agents in scope</Text></Center></Table.Td>
                   </Table.Tr>
                 ) : (
                   rows.map((r) => (
@@ -88,13 +91,18 @@ export default function MisPage() {
                           <Text size="xs">{r.achievementPct}%</Text>
                         </Group>
                       </Table.Td>
+                      <Table.Td>
+                        <Text size="sm" c={r.corrections > 0 ? 'orange' : 'dimmed'} fw={r.corrections > 0 ? 600 : 400}>
+                          {r.corrections}
+                        </Text>
+                      </Table.Td>
                     </Table.Tr>
                   ))
                 )}
               </Table.Tbody>
               {totals && rows.length > 0 && (
                 <Table.Tfoot>
-                  <Table.Tr>
+                  <Table.Tr style={{ borderTop: '2px solid var(--mantine-color-default-border)', background: 'var(--mantine-color-default-hover)' }}>
                     <Table.Th>Total</Table.Th>
                     <Table.Th>{AED(totals.target)}</Table.Th>
                     <Table.Th>{totals.submissions}</Table.Th>
@@ -103,6 +111,7 @@ export default function MisPage() {
                     <Table.Th>{totals.activatedCount}</Table.Th>
                     <Table.Th>{AED(totals.achieved)}</Table.Th>
                     <Table.Th>{totals.achievementPct}%</Table.Th>
+                    <Table.Th>{totals.corrections}</Table.Th>
                   </Table.Tr>
                 </Table.Tfoot>
               )}

@@ -1,18 +1,14 @@
 import { useMemo, useState } from 'react';
-import { Button, Group, Modal, Stack, TextInput, Select, NumberInput, Badge, ActionIcon, Tooltip } from '@mantine/core';
+import { Button, Group, Modal, Stack, TextInput, ActionIcon, Tooltip } from '@mantine/core';
 import { useForm } from '@mantine/form';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { notifications } from '../../utils/toast';
 import { Plus, Pencil, Trash2, Power } from 'lucide-react';
 import DataTable from '../../components/DataTable';
+import Tag from '../../components/Tag';
 import { usePagedList } from '../../hooks/usePagedList';
 import { fetchProducts, createProduct, updateProduct, deleteProduct } from '../../api/products';
-import { fetchSegments } from '../../api/segments';
 import { useConfirm } from '../../context/ConfirmContext';
-
-function AED(n) {
-  return `AED ${Number(n || 0).toLocaleString()}`;
-}
 
 export default function ProductsTab({ canEdit }) {
   const queryClient = useQueryClient();
@@ -21,16 +17,13 @@ export default function ProductsTab({ canEdit }) {
   const [editRow, setEditRow] = useState(null);
 
   const list = usePagedList(['products'], fetchProducts);
-  const segmentsQuery = useQuery({ queryKey: ['segments'], queryFn: fetchSegments });
-  const segments = segmentsQuery.data?.data || [];
-  const segmentOptions = segments.map((s) => ({ value: s._id, label: s.name }));
 
   const form = useForm({
-    initialValues: { title: '', cat: '', segmentId: '', price: '' },
+    initialValues: { title: '', cat: '' },
   });
 
   const editForm = useForm({
-    initialValues: { title: '', cat: '', segmentId: '', price: '' },
+    initialValues: { title: '', cat: '' },
   });
 
   const refresh = () => {
@@ -43,14 +36,12 @@ export default function ProductsTab({ canEdit }) {
     editForm.setValues({
       title: row.title,
       cat: row.cat,
-      segmentId: row.segmentId?._id || '',
-      price: row.price,
     });
   };
 
   const handleCreate = async (values) => {
     try {
-      await createProduct({ ...values, segmentId: values.segmentId || null, price: values.price === '' ? 0 : values.price });
+      await createProduct(values);
       notifications.show({ color: 'green', message: 'Product created' });
       setCreateOpen(false);
       form.reset();
@@ -62,7 +53,7 @@ export default function ProductsTab({ canEdit }) {
 
   const handleEdit = async (values) => {
     try {
-      await updateProduct(editRow._id, { ...values, segmentId: values.segmentId || null, price: values.price === '' ? 0 : values.price });
+      await updateProduct(editRow._id, values);
       notifications.show({ color: 'green', message: 'Product updated' });
       setEditRow(null);
       refresh();
@@ -110,13 +101,11 @@ export default function ProductsTab({ canEdit }) {
   const columns = useMemo(
     () => [
       { accessorKey: 'title', header: 'Product' },
-      { accessorKey: 'cat', header: 'Category', cell: (info) => <Badge variant="light">{info.getValue()}</Badge> },
-      { accessorKey: 'segmentId', header: 'Segment', cell: (info) => info.getValue()?.name || '-' },
-      { accessorKey: 'price', header: 'Price (MRC)', cell: (info) => AED(info.getValue()) },
+      { accessorKey: 'cat', header: 'Category', cell: (info) => <Tag>{info.getValue()}</Tag> },
       {
         accessorKey: 'active',
         header: 'Status',
-        cell: (info) => <Badge color={info.getValue() ? 'green' : 'gray'} variant="light">{info.getValue() ? 'Active' : 'Inactive'}</Badge>,
+        cell: (info) => <Tag color={info.getValue() ? 'green' : 'gray'}>{info.getValue() ? 'Active' : 'Inactive'}</Tag>,
       },
       ...(canEdit
         ? [
@@ -128,17 +117,17 @@ export default function ProductsTab({ canEdit }) {
                 return (
                   <Group gap="xs" wrap="nowrap">
                     <Tooltip label="Edit product">
-                      <ActionIcon variant="light" size="lg" radius="md" onClick={() => openEdit(row)} aria-label="Edit product">
+                      <ActionIcon variant="filled" size="lg" radius="md" onClick={() => openEdit(row)} aria-label="Edit product">
                         <Pencil size={18} />
                       </ActionIcon>
                     </Tooltip>
                     <Tooltip label={row.active ? 'Deactivate' : 'Activate'}>
-                      <ActionIcon variant="light" color={row.active ? 'orange' : 'green'} size="lg" radius="md" onClick={() => handleToggleActive(row)} aria-label="Toggle active">
+                      <ActionIcon variant="filled" color={row.active ? 'orange' : 'green'} size="lg" radius="md" onClick={() => handleToggleActive(row)} aria-label="Toggle active">
                         <Power size={18} />
                       </ActionIcon>
                     </Tooltip>
                     <Tooltip label="Delete product">
-                      <ActionIcon variant="light" color="red" size="lg" radius="md" onClick={() => handleDelete(row)} aria-label="Delete product">
+                      <ActionIcon variant="filled" color="red" size="lg" radius="md" onClick={() => handleDelete(row)} aria-label="Delete product">
                         <Trash2 size={18} />
                       </ActionIcon>
                     </Tooltip>
@@ -172,6 +161,8 @@ export default function ProductsTab({ canEdit }) {
         onPageChange={list.onPageChange}
         search={list.search}
         onSearchChange={list.onSearchChange}
+        sorting={list.sorting}
+        onSortingChange={list.onSortingChange}
         isLoading={list.isLoading}
         emptyLabel="No products in the catalog yet"
       />
@@ -181,8 +172,6 @@ export default function ProductsTab({ canEdit }) {
           <Stack gap="sm">
             <TextInput label="Title" required {...form.getInputProps('title')} />
             <TextInput label="Category" placeholder="e.g. Fixed, Mobile, Digital" required {...form.getInputProps('cat')} />
-            <Select label="Segment" placeholder="None" data={segmentOptions} clearable {...form.getInputProps('segmentId')} />
-            <NumberInput label="Price (MRC)" min={0} {...form.getInputProps('price')} />
             <Button type="submit" mt="sm">Save Product</Button>
           </Stack>
         </form>
@@ -193,8 +182,6 @@ export default function ProductsTab({ canEdit }) {
           <Stack gap="sm">
             <TextInput label="Title" required {...editForm.getInputProps('title')} />
             <TextInput label="Category" required {...editForm.getInputProps('cat')} />
-            <Select label="Segment" placeholder="None" data={segmentOptions} clearable {...editForm.getInputProps('segmentId')} />
-            <NumberInput label="Price (MRC)" min={0} {...editForm.getInputProps('price')} />
             <Button type="submit" mt="sm">Save changes</Button>
           </Stack>
         </form>

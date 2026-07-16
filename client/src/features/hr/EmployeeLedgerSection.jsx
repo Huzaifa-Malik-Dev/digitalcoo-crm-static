@@ -1,12 +1,14 @@
 import { useState } from 'react';
-import { Paper, Divider, Group, Text, Stack, Badge, Button, Modal, Radio, NumberInput, TextInput, Table, Loader, Center, ActionIcon, Tooltip } from '@mantine/core';
+import { Paper, Divider, Group, Text, Stack, Button, Modal, Radio, NumberInput, TextInput, Table, Loader, Center, ActionIcon, Tooltip } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Download, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Upload, Pencil, Trash2 } from 'lucide-react';
 import { notifications } from '../../utils/toast';
 import { fetchLedger, createLedgerEntry, updateLedgerEntry, deleteLedgerEntry } from '../../api/payroll';
 import { useAuth } from '../../context/AuthContext';
 import { useConfirm } from '../../context/ConfirmContext';
+import MonthInput from '../../components/MonthInput';
+import Tag from '../../components/Tag';
 
 function AED(n) {
   return `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -179,9 +181,9 @@ export default function EmployeeLedgerSection({ employeeId }) {
       <Group justify="space-between" mb="sm">
         <Divider label="Ledger" labelPosition="left" flex={1} mr="md" />
         <Group gap="xs" wrap="nowrap">
-          <TextInput type="month" size="xs" value={month} max={currentMonth()} onChange={(e) => setMonth(e.currentTarget.value)} aria-label="Month" />
+          <MonthInput size="xs" value={month} max={currentMonth()} onChange={setMonth} aria-label="Month" />
           {monthRows.length > 0 && (
-            <Button size="xs" variant="light" color="gray" leftSection={<Download size={14} />} onClick={() => exportCsv(employeeId, monthRows)}>
+            <Button size="xs" variant="light" color="gray" leftSection={<Upload size={14} />} onClick={() => exportCsv(employeeId, monthRows)}>
               Export CSV
             </Button>
           )}
@@ -226,8 +228,8 @@ export default function EmployeeLedgerSection({ employeeId }) {
                       <Table.Td>{formatAdded(r.createdAt)}</Table.Td>
                       <Table.Td>
                         <Group gap={6} wrap="nowrap">
-                          <Badge size="xs" color={TYPE_COLOR[r.type] || 'gray'} variant="light">{r.type}</Badge>
-                          {r.status === 'Open' && <Badge size="xs" color="yellow" variant="light">Open</Badge>}
+                          <Tag size="xs" color={TYPE_COLOR[r.type] || 'gray'}>{r.type}</Tag>
+                          {r.status === 'Open' && <Tag size="xs" color="yellow">Open</Tag>}
                           <Text size="xs" c="dimmed">{r.note || '—'}</Text>
                         </Group>
                       </Table.Td>
@@ -243,12 +245,12 @@ export default function EmployeeLedgerSection({ employeeId }) {
                           ) : (
                             <Group gap={4} wrap="nowrap">
                               <Tooltip label="Edit entry">
-                                <ActionIcon variant="light" size="sm" radius="md" onClick={() => openEdit(r)} aria-label="Edit entry">
+                                <ActionIcon variant="filled" size="sm" radius="md" onClick={() => openEdit(r)} aria-label="Edit entry">
                                   <Pencil size={14} />
                                 </ActionIcon>
                               </Tooltip>
                               <Tooltip label="Delete entry">
-                                <ActionIcon variant="light" color="red" size="sm" radius="md" onClick={() => handleDelete(r)} aria-label="Delete entry">
+                                <ActionIcon variant="filled" color="red" size="sm" radius="md" onClick={() => handleDelete(r)} aria-label="Delete entry">
                                   <Trash2 size={14} />
                                 </ActionIcon>
                               </Tooltip>
@@ -283,7 +285,7 @@ export default function EmployeeLedgerSection({ employeeId }) {
                 ? 'Deducted in full from this employee\'s next payroll run.'
                 : 'Recorded as already paid to this employee.'}
             </Text>
-            <TextInput type="month" label="Month" required max={currentMonth()} {...form.getInputProps('month')} />
+            <MonthInput label="Month" required max={currentMonth()} {...form.getInputProps('month')} />
             <NumberInput label="Amount (AED)" min={0} required {...form.getInputProps('amount')} />
             <TextInput
               label={form.values.action === 'add' ? 'Reason' : 'Note (optional)'}
@@ -306,7 +308,7 @@ export default function EmployeeLedgerSection({ employeeId }) {
                 <Radio value="add" label="Add Amount" />
               </Group>
             </Radio.Group>
-            <TextInput type="month" label="Month" required max={currentMonth()} description="Move this entry to any previous month." {...editForm.getInputProps('month')} />
+            <MonthInput label="Month" required max={currentMonth()} description="Move this entry to any previous month." {...editForm.getInputProps('month')} />
             <NumberInput label="Amount (AED)" min={0} required {...editForm.getInputProps('amount')} />
             <TextInput
               label={editForm.values.action === 'add' ? 'Reason' : 'Note (optional)'}

@@ -42,7 +42,6 @@ const PERMISSION_TREE = [
       { key: 'hr.allEmployees', label: 'All Employees' },
       { key: 'hr.activeEmployees', label: 'Active Employees' },
       { key: 'hr.teamAssignment', label: 'Team Assignment' },
-      { key: 'hr.passportManagement', label: 'Passport Management' },
       { key: 'hr.addEmployee', label: 'Add Employee' },
     ],
   },
@@ -61,49 +60,62 @@ const PERMISSION_TREE = [
     key: 'accounting',
     label: 'Accounting',
     children: [
-      { key: 'accounting.chartOfAccounts', label: 'Chart of Accounts' },
+      { key: 'accounting.chartOfAccounts', label: 'Chart of Accounts & Banking' },
       { key: 'accounting.expenses', label: 'Company Expenses' },
       { key: 'accounting.cheques', label: 'Cheques' },
+      { key: 'accounting.journal', label: 'Journal Entries' },
+      { key: 'accounting.reports', label: 'Financial Reports' },
     ],
+  },
+  {
+    key: 'leave',
+    label: 'Leave',
+    children: [
+      { key: 'leave.approve', label: 'Approve / Reject Team Leave' },
+      { key: 'leave.settings', label: 'Leave Types & Holidays' },
+    ],
+  },
+  {
+    key: 'attendance',
+    label: 'Attendance',
+    children: [{ key: 'attendance.manage', label: 'Mark Attendance (HR/Admin)' }],
   },
   { key: 'ai', label: 'AI Reports' },
-  {
-    key: 'products',
-    label: 'Products & Segments',
-    children: [
-      { key: 'products.products', label: 'Products' },
-      { key: 'products.segments', label: 'Segments' },
-    ],
-  },
+  { key: 'products', label: 'Products' },
   { key: 'admin', label: 'Admin / Settings' },
 ];
 
 const MODULES = PERMISSION_TREE.map((m) => m.key);
 const ALL_PERMISSION_KEYS = PERMISSION_TREE.flatMap((m) => [m.key, ...(m.children || []).map((c) => c.key)]);
 
+// Every role gets 'leave' and 'attendance' view access - unlike every other module, these are
+// company-wide self-service (everyone has their own leave/attendance to look at), not
+// role-restricted.
 const MODULE_ACCESS_DEFAULT = {
-  admin: ['dash', 'dsr', 'pipeline', 'backoffice', 'mis', 'hr', 'payroll', 'accounting', 'ai', 'products', 'admin'],
-  sales_head: ['dash', 'pipeline', 'mis', 'ai', 'products'],
-  teams_head: ['dash', 'pipeline', 'mis', 'ai', 'products'],
-  team_leader: ['dash', 'dsr', 'pipeline', 'mis', 'ai', 'products'],
-  agent: ['dash', 'dsr', 'pipeline', 'products'],
-  backoffice: ['dash', 'backoffice', 'mis', 'ai', 'products'],
-  accountant: ['dash', 'accounting', 'payroll', 'ai'],
-  hr: ['dash', 'hr', 'payroll', 'ai'],
+  admin: ['dash', 'dsr', 'pipeline', 'backoffice', 'mis', 'hr', 'payroll', 'accounting', 'leave', 'attendance', 'ai', 'products', 'admin'],
+  sales_head: ['dash', 'pipeline', 'mis', 'leave', 'attendance', 'ai', 'products'],
+  teams_head: ['dash', 'pipeline', 'mis', 'leave', 'attendance', 'ai', 'products'],
+  team_leader: ['dash', 'dsr', 'pipeline', 'mis', 'leave', 'attendance', 'ai', 'products'],
+  agent: ['dash', 'dsr', 'pipeline', 'leave', 'attendance', 'products'],
+  backoffice: ['dash', 'backoffice', 'mis', 'leave', 'attendance', 'ai', 'products'],
+  accountant: ['dash', 'accounting', 'payroll', 'leave', 'attendance', 'ai'],
+  hr: ['dash', 'hr', 'payroll', 'leave', 'attendance', 'ai'],
 };
 
+// 'leave' edit = can request/cancel their own leave - granted to every role, same reasoning as
+// above. 'attendance' edit (marking the register) stays admin/hr-only.
 const MODULE_EDIT_DEFAULT = {
-  admin: ['dsr', 'pipeline', 'backoffice', 'hr', 'payroll', 'accounting', 'products', 'admin'],
-  sales_head: ['pipeline'],
-  teams_head: ['pipeline'],
-  team_leader: ['dsr', 'pipeline'],
-  agent: ['dsr', 'pipeline'],
-  backoffice: ['backoffice'],
-  accountant: ['payroll', 'accounting'],
+  admin: ['dsr', 'pipeline', 'backoffice', 'hr', 'payroll', 'accounting', 'leave', 'attendance', 'products', 'admin'],
+  sales_head: ['pipeline', 'leave'],
+  teams_head: ['pipeline', 'leave'],
+  team_leader: ['dsr', 'pipeline', 'leave'],
+  agent: ['dsr', 'pipeline', 'leave'],
+  backoffice: ['backoffice', 'leave'],
+  accountant: ['payroll', 'accounting', 'leave'],
   // 'payroll' here only unlocks payroll.commissionTiers below - every other payroll edit action
   // (process/delete/ledger) stays admin/accountant-only via SENSITIVE_ACTION_GRANTS stripping it
   // back out for any role not explicitly listed there.
-  hr: ['payroll'],
+  hr: ['payroll', 'leave', 'attendance'],
 };
 
 // A role that can view/edit a module gets every tab under it by default too (admin can narrow
@@ -133,6 +145,12 @@ const SENSITIVE_ACTION_GRANTS = {
   'payroll.commissionTiers': ['admin', 'hr'],
   'pipeline.approve': ['admin', 'sales_head', 'teams_head', 'team_leader'],
   'backoffice.statusChange': ['admin', 'backoffice'],
+  // The actual "is this really their manager" check happens per-request in services/leave.js
+  // (isAuthorizedApprover walks the employee's whole managerChain) - this just gates who can
+  // reach the approval UI/endpoints at all, same two-layer pattern pipeline.approve already uses.
+  'leave.approve': ['admin', 'hr', 'team_leader', 'teams_head', 'sales_head'],
+  'leave.settings': ['admin', 'hr'],
+  'attendance.manage': ['admin', 'hr'],
 };
 
 const ACCESS_DEFAULT = expandWithChildren(MODULE_ACCESS_DEFAULT);
@@ -166,12 +184,33 @@ const NOT_CONNECTED_STATUSES = ['No answer', 'Voicemail', 'Number not in use', '
 // approval workflow, see APPROVAL_STATUS below).
 const PIPE_STAGES = ['10%- Prospect', '30% - Value Prop', '50% - Negotiation', '70% - Finalizing', '90% - Closing', '100% - Deal Won', '0% - Lost'];
 
+// Subscription Type on a Pipeline deal - a closed set, not free text (business rule).
+const SR_TYPES = ['MNP', 'FNP', 'NEW'];
+
 // The optional TL sign-off workflow - independent of the deal's sales-progress stage. An agent
 // can ask their TL to review/approve a deal at any point; reaching 100% also opens an order
 // regardless of approval state. See services/workflow.js.
 const APPROVAL_STATUS = ['none', 'pending_tl', 'approved', 'rejected'];
 
-const ORDER_STATUS = ['New', 'E& In-process', 'On Hold', 'Activated', 'Closed', 'Cancelled'];
+// Fields a Pipeline deal must have filled in (and saved) before Team Leader approval can be
+// requested. `director` is deliberately excluded - it's the one optional field. Shared by
+// pipelineController's updateSchema (client can't save the deal without these) and
+// services/workflow.escalateToTL (client can't request approval without these) so the two
+// enforcement points can never drift apart. The client keeps its own mirror of this list purely
+// for instant UI feedback (disabled button + inline field errors) - this is the actual source of truth.
+const PIPELINE_REQUIRED_FOR_APPROVAL = {
+  cat: 'Category', product: 'Product', sr: 'Subscription Type', price: 'Unit Price',
+  qty: 'Quantity', email: 'Customer Email', expectedCloseDate: 'Expected Close Date', remarks: 'Remarks',
+};
+
+// 'In Line' = Etisalat has paid — the order closes and locks (see workflow.updateOrderStatus /
+// orderController.update): no more field edits or status changes except to 'Cancelled'.
+// 'Not In Line' = payment is pending/doesn't match yet — a plain flag, no lock, edits freely.
+const ORDER_STATUS = ['New', 'E& In-process', 'On Hold', 'Activated', 'Closed', 'Cancelled', 'In Line', 'Not In Line'];
+
+// e&'s own processing status for the order - independent of ORDER_STATUS (this app's internal
+// fulfillment workflow). Assigned by Back Office once they have visibility into e&'s side.
+const ETISALAT_STATUS = ['Submitted', 'In Progress', 'Pending for delivery', 'Activated', 'Rejected', 'Closed'];
 
 // Modules that support bulk Import/Export of records (from the real Excel trackers). Kept as its
 // own axis from view/edit - a user can be able to see and edit a module's records one-by-one in
@@ -186,6 +225,12 @@ const IMPORT_EXPORT_MODULES = ['dsr', 'pipeline', 'backoffice', 'hr'];
 // legalCaseDoc / abscondingMohreDoc / abscondingGdrfaDoc in models/User.js).
 const ABSCONDING_STATUS = ['No', 'Yes'];
 const LEGAL_CASE_STATUS = ['No', 'Yes'];
+
+// AI Reports page - narrative report types available for the real-LLM async job. 'team' is
+// restricted to roles with visibility across more than their own individual production (same
+// roles misController treats as "sees everyone/their whole team" for its own rollups).
+const AI_REPORT_TYPES = ['performance', 'pipeline', 'financial', 'team'];
+const AI_TEAM_REPORT_ROLES = ['admin', 'sales_head', 'teams_head', 'team_leader', 'backoffice'];
 
 const IMPORT_EXPORT_DEFAULT = {
   admin: ['dsr', 'pipeline', 'backoffice', 'hr'],
@@ -209,10 +254,15 @@ module.exports = {
   CALL_STATUS,
   NOT_CONNECTED_STATUSES,
   PIPE_STAGES,
+  SR_TYPES,
   APPROVAL_STATUS,
+  PIPELINE_REQUIRED_FOR_APPROVAL,
   ORDER_STATUS,
+  ETISALAT_STATUS,
   IMPORT_EXPORT_MODULES,
   IMPORT_EXPORT_DEFAULT,
   ABSCONDING_STATUS,
   LEGAL_CASE_STATUS,
+  AI_REPORT_TYPES,
+  AI_TEAM_REPORT_ROLES,
 };

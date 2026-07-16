@@ -1,43 +1,23 @@
-import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Stack, SimpleGrid, Paper, Text, Group, Badge, Loader, Center, Modal, ScrollArea,
-  UnstyledButton, ThemeIcon, Divider,
+  Stack, SimpleGrid, Paper, Text, Group, Badge, Loader, Center,
+  UnstyledButton, ThemeIcon,
 } from '@mantine/core';
 import { IdCard, Plane, Fingerprint, Landmark, ShieldCheck, CircleCheck } from 'lucide-react';
 import { fetchComplianceSummary } from '../../api/hr';
-import { employeeUrlId } from './employeeUrl';
 
 const CATEGORY_ICON = { passport: IdCard, visa: Plane, eid: Fingerprint, labourCard: Landmark, insurance: ShieldCheck };
-
-function EmployeeRow({ employee, onOpen }) {
-  return (
-    <UnstyledButton onClick={() => onOpen(employee.employeeId)} w="100%">
-      <Group justify="space-between" py={6} px={4} style={{ borderRadius: 6 }}>
-        <Group gap="xs">
-          <Text size="sm" fw={600}>{employee.name}</Text>
-          <Text size="xs" c="dimmed">{employee.employeeId}</Text>
-        </Group>
-        <Text size="xs" c="dimmed">{employee.expiry || 'No date on file'}</Text>
-      </Group>
-    </UnstyledButton>
-  );
-}
 
 export default function HrDashboardTab() {
   const navigate = useNavigate();
   const { data, isLoading } = useQuery({ queryKey: ['hr', 'compliance-summary'], queryFn: fetchComplianceSummary });
-  const [activeCategory, setActiveCategory] = useState(null);
 
   if (isLoading) return <Center py="xl"><Loader size="sm" /></Center>;
 
   const categories = data?.data?.categories || [];
   const totalExpired = data?.data?.totalExpired || 0;
   const totalExpiring = data?.data?.totalExpiring || 0;
-  const selected = categories.find((c) => c.key === activeCategory);
-
-  const goToEmployee = (employeeId) => navigate(`/hr/employees/${employeeUrlId(employeeId)}`);
 
   return (
     <Stack gap="md">
@@ -64,7 +44,7 @@ export default function HrDashboardTab() {
               p="md"
               radius="md"
               component={UnstyledButton}
-              onClick={() => setActiveCategory(cat.key)}
+              onClick={() => navigate(`/hr/compliance/${cat.key}`)}
               style={{ cursor: 'pointer' }}
             >
               <Group justify="space-between" mb="xs">
@@ -81,36 +61,6 @@ export default function HrDashboardTab() {
           );
         })}
       </SimpleGrid>
-
-      <Modal opened={!!selected} onClose={() => setActiveCategory(null)} title={selected?.label} size="md">
-        {selected && (
-          <Stack gap="md">
-            <div>
-              <Group gap="xs" mb="xs">
-                <Badge color="red" variant="light">Expired ({selected.expired.length})</Badge>
-              </Group>
-              <ScrollArea.Autosize mah={200} viewportProps={{ tabIndex: 0, role: 'region', 'aria-label': 'Expired documents, scrollable' }}>
-                <Stack gap={2}>
-                  {selected.expired.length === 0 && <Text size="sm" c="dimmed">None</Text>}
-                  {selected.expired.map((e) => <EmployeeRow key={e._id} employee={e} onOpen={goToEmployee} />)}
-                </Stack>
-              </ScrollArea.Autosize>
-            </div>
-            <Divider />
-            <div>
-              <Group gap="xs" mb="xs">
-                <Badge color="yellow" variant="light">Expiring within 30 days ({selected.expiring.length})</Badge>
-              </Group>
-              <ScrollArea.Autosize mah={200} viewportProps={{ tabIndex: 0, role: 'region', 'aria-label': 'Expiring documents, scrollable' }}>
-                <Stack gap={2}>
-                  {selected.expiring.length === 0 && <Text size="sm" c="dimmed">None</Text>}
-                  {selected.expiring.map((e) => <EmployeeRow key={e._id} employee={e} onOpen={goToEmployee} />)}
-                </Stack>
-              </ScrollArea.Autosize>
-            </div>
-          </Stack>
-        )}
-      </Modal>
     </Stack>
   );
 }

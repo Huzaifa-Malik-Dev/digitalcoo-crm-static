@@ -56,7 +56,7 @@ export default function LoginPage() {
             <Stack gap="md">
               <TextInput
                 label="Username"
-                placeholder="e.g. hira"
+                placeholder=""
                 value={username}
                 onChange={(e) => setUsername(e.currentTarget.value)}
                 required

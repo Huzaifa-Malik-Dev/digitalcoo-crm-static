@@ -22,8 +22,10 @@ const pipelineSchema = new mongoose.Schema(
     email: { type: String, default: '' },
     cat: { type: String, default: '' },
     product: { type: String, default: '' },
-    // Subscription type (NEW / MNP / MIG / B-ON / SOHO / ...) - free text since the real
-    // catalog of these is longer than a fixed enum and grows per e& product line.
+    // Subscription type - closed set (MNP / FNP / NEW), enforced by pipelineController's zod
+    // schemas rather than a Mongoose-level enum here, so a pre-existing deal saved under the old
+    // free-text scheme doesn't fail whole-document validation on an unrelated save (e.g. a TL
+    // approval) before it's next edited through the (now-enum-gated) update endpoint.
     sr: { type: String, default: '' },
     price: { type: Number, default: 0 },
     qty: { type: Number, default: 1 },
@@ -35,10 +37,11 @@ const pipelineSchema = new mongoose.Schema(
     // The optional TL sign-off workflow - independent of stage. See services/workflow.js.
     approval: { type: String, enum: APPROVAL_STATUS, default: 'none' },
 
+    // Set once, at conversion/import time, to the date the deal entered the pipeline - never
+    // client-editable afterward (see pipelineController.updateSchema, which omits this field).
     startedDate: { type: String, default: '' },
     expectedCloseDate: { type: String, default: '' },
     director: { type: String, default: '' },
-    directorInvolvement: { type: String, default: '' },
 
     remarks: { type: String, default: '' },
     history: [historyEntrySchema],

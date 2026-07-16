@@ -1,6 +1,6 @@
 import { useReactTable, getCoreRowModel, flexRender } from '@tanstack/react-table';
-import { Table, Pagination, Group, Text, TextInput, Select, Loader, Center, Box, Tooltip } from '@mantine/core';
-import { Search } from 'lucide-react';
+import { Table, Pagination, Group, Text, TextInput, Select, Loader, Center, Box, Tooltip, UnstyledButton } from '@mantine/core';
+import { Search, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 
 // Thin wrapper around @tanstack/react-table for server-driven data: the caller owns
 // page/limit/sort/search state and the fetch (via TanStack Query); this component only
@@ -19,6 +19,8 @@ export default function DataTable({
   isLoading,
   emptyLabel = 'No records found',
   onRowClick,
+  sorting = [],
+  onSortingChange = () => {},
 }) {
   const table = useReactTable({
     data,
@@ -27,6 +29,9 @@ export default function DataTable({
     manualPagination: true,
     manualFiltering: true,
     manualSorting: true,
+    enableMultiSort: false,
+    state: { sorting },
+    onSortingChange,
   });
 
   const totalPages = Math.max(1, Math.ceil(totalRowCount / limit));
@@ -49,11 +54,23 @@ export default function DataTable({
           <Table.Thead>
             {table.getHeaderGroups().map((headerGroup) => (
               <Table.Tr key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <Table.Th key={header.id} style={{ whiteSpace: 'nowrap' }}>
-                    {flexRender(header.column.columnDef.header, header.getContext())}
-                  </Table.Th>
-                ))}
+                {headerGroup.headers.map((header) => {
+                  const canSort = header.column.getCanSort();
+                  const sortDir = header.column.getIsSorted();
+                  const label = flexRender(header.column.columnDef.header, header.getContext());
+                  return (
+                    <Table.Th key={header.id} style={{ whiteSpace: 'nowrap' }}>
+                      {canSort ? (
+                        <UnstyledButton onClick={header.column.getToggleSortingHandler()} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <Text size="sm" fw={700} span>{label}</Text>
+                          {sortDir === 'asc' ? <ChevronUp size={14} /> : sortDir === 'desc' ? <ChevronDown size={14} /> : <ChevronsUpDown size={14} opacity={0.4} />}
+                        </UnstyledButton>
+                      ) : (
+                        label
+                      )}
+                    </Table.Th>
+                  );
+                })}
               </Table.Tr>
             ))}
           </Table.Thead>
@@ -74,7 +91,13 @@ export default function DataTable({
               table.getRowModel().rows.map((row) => (
                 <Table.Tr
                   key={row.id}
-                  style={onRowClick ? { cursor: 'pointer' } : undefined}
+                  style={{
+                    ...(onRowClick ? { cursor: 'pointer' } : null),
+                    // "New" (never viewed by this user - see server/services/recordViews.js)
+                    // rows get a light tint that clears itself once the row's isNew flips false,
+                    // which the View/Edit click handlers do optimistically on click.
+                    ...(row.original?.isNew ? { backgroundColor: 'var(--row-new-bg)' } : null),
+                  }}
                   onClick={
                     onRowClick
                       ? (e) => {

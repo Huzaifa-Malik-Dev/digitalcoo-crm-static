@@ -17,6 +17,13 @@ body {
      never blend in, regardless of which theme is active. */
   --toast-neutral-bg: #1a1b1e;
   --toast-neutral-color: #f1f3f5;
+  /* Mantine's default disabled-input text (gray-5) reads as barely-there on a white background -
+     every read-only/disabled field in the app (locked orders, view-only deal fields, etc.) needs
+     its value legible at a glance, not just technically present in the DOM. */
+  --mantine-color-disabled-color: var(--mantine-color-gray-7);
+  /* Subtle "not yet viewed" row tint on list tables (see DataTable.jsx) - a blue tint reads as
+     "new/unread" without colliding with the app's red=error/green=success/orange=warning palette. */
+  --row-new-bg: rgba(34, 110, 230, 0.07);
 }
 :root[data-mantine-color-scheme='dark'] {
   color-scheme: dark !important;
@@ -24,8 +31,19 @@ body {
   --panel-bg: var(--mantine-color-dark-6);
   --toast-neutral-bg: #f1f3f5;
   --toast-neutral-color: #1a1b1e;
+  /* Same reasoning as the light-scheme override above - dark-3 is too dim against this app's dark
+     background to read comfortably. */
+  --mantine-color-disabled-color: var(--mantine-color-gray-4);
+  --row-new-bg: rgba(76, 154, 255, 0.1);
 }
 
 #root {
   min-height: 100svh;
+}
+
+/* Outlines the current month in every MonthInput dropdown (see components/MonthInput.jsx) so
+   it's obvious at a glance which month "now" is, separate from whichever month is selected. */
+.month-input-control[data-current-month] {
+  border: 1px solid var(--mantine-color-red-6);
+  font-weight: 700;
 }

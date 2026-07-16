@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Stack, TextInput, PasswordInput, NumberInput, Select, Button, Title, Group, Paper,
-  SimpleGrid, ActionIcon, Text, Stepper, Divider, Badge, Textarea, SegmentedControl, FileButton,
+  SimpleGrid, ActionIcon, Text, Stepper, Divider, Textarea, SegmentedControl, FileButton,
 } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { notifications } from '../../utils/toast';
@@ -16,6 +16,8 @@ import { useAuth } from '../../context/AuthContext';
 import { ROLE_LABELS } from '../../constants/nav';
 import { EMPTY_COMPLIANCE, LEGAL_CASE_STATUS, ABSCONDING_STATUS, isUnderage } from './complianceDefaults';
 import { employeeUrlId } from './employeeUrl';
+import { formatDate } from '../../utils/date';
+import Tag from '../../components/Tag';
 
 const ROLE_OPTIONS = Object.entries(ROLE_LABELS).map(([value, label]) => ({ value, label }));
 const PAY_TYPE_OPTIONS = [
@@ -146,7 +148,7 @@ export default function AddEmployeePage() {
     return (
       <Stack gap="md" maw={700}>
         <Group>
-          <ActionIcon variant="subtle" onClick={() => navigate(-1)}>
+          <ActionIcon variant="subtle" onClick={() => navigate('/hr')} aria-label="Back to HR">
             <ArrowLeft size={18} />
           </ActionIcon>
           <Title order={1} size="h3">Add Employee</Title>
@@ -162,7 +164,7 @@ export default function AddEmployeePage() {
   return (
     <Stack gap="md" maw={900} mx="auto">
       <Group>
-        <ActionIcon variant="subtle" onClick={() => navigate(-1)}>
+        <ActionIcon variant="subtle" onClick={() => navigate('/hr')} aria-label="Back to HR">
           <ArrowLeft size={18} />
         </ActionIcon>
         <Title order={1} size="h3">Add Employee</Title>
@@ -354,7 +356,7 @@ export default function AddEmployeePage() {
                 <SimpleGrid cols={2}>
                   <Text size="sm"><b>Name:</b> {form.values.name || '—'}</Text>
                   <Text size="sm"><b>Arabic Name:</b> {form.values.arabicName || '—'}</Text>
-                  <Text size="sm"><b>Role:</b> <Badge variant="light">{ROLE_LABELS[form.values.role] || form.values.role}</Badge></Text>
+                  <Text size="sm"><b>Role:</b> <Tag>{ROLE_LABELS[form.values.role] || form.values.role}</Tag></Text>
                   <Text size="sm"><b>Username:</b> {form.values.username || '—'}</Text>
                 </SimpleGrid>
                 <Divider label="Employment" labelPosition="left" />
@@ -362,7 +364,7 @@ export default function AddEmployeePage() {
                   <Text size="sm"><b>Designation:</b> {form.values.desig || '—'}</Text>
                   <Text size="sm"><b>Department:</b> {form.values.dept || '—'}</Text>
                   <Text size="sm"><b>Reports To:</b> {managerLabel || 'None (top of chain)'}</Text>
-                  <Text size="sm"><b>Join Date:</b> {form.values.join || '—'}</Text>
+                  <Text size="sm"><b>Join Date:</b> {formatDate(form.values.join) || '—'}</Text>
                   <Text size="sm"><b>Pay Type:</b> {PAY_TYPE_OPTIONS.find((o) => o.value === form.values.payType)?.label}</Text>
                   <Text size="sm"><b>Monthly Target:</b> AED {Number(form.values.target || 0).toLocaleString()}</Text>
                   <Text size="sm"><b>Salary:</b> AED {Number(form.values.salary || 0).toLocaleString()}</Text>
@@ -371,7 +373,7 @@ export default function AddEmployeePage() {
                 <SimpleGrid cols={2}>
                   <Text size="sm"><b>Email:</b> {form.values.email || '—'}</Text>
                   <Text size="sm"><b>Phone:</b> {form.values.phone || '—'}</Text>
-                  <Text size="sm"><b>Date of Birth:</b> {form.values.compliance.dob || '—'}</Text>
+                  <Text size="sm"><b>Date of Birth:</b> {formatDate(form.values.compliance.dob) || '—'}</Text>
                   <Text size="sm"><b>Nationality:</b> {form.values.compliance.nationality || '—'}</Text>
                   <Text size="sm"><b>UID:</b> {form.values.compliance.uid || '—'}</Text>
                 </SimpleGrid>

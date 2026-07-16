@@ -12,3 +12,4 @@ export const importDsr = (file) => {
   return api.post('/dsr/import', form).then((r) => r.data);
 };
 export const fetchDsrAutocomplete = (params) => api.get('/dsr/autocomplete', { params }).then((r) => r.data);
+export const fetchLoggableEmployees = () => api.get('/dsr/loggable-employees').then((r) => r.data);

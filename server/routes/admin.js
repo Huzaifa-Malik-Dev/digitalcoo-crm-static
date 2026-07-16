@@ -9,6 +9,7 @@ const {
   clearUserOverride,
   updateRoleImportExport,
   updateUserImportExportOverride,
+  listActivity,
 } = require('../controllers/adminController');
 
 const router = express.Router();
@@ -21,5 +22,7 @@ router.patch('/permissions/user', requireModule('admin', { edit: true }), update
 router.delete('/permissions/user/:userId', requireModule('admin', { edit: true }), clearUserOverride);
 router.patch('/permissions/role/import-export', requireModule('admin', { edit: true }), updateRoleImportExport);
 router.patch('/permissions/user/import-export', requireModule('admin', { edit: true }), updateUserImportExportOverride);
+
+router.get('/activity', listActivity);
 
 module.exports = router;

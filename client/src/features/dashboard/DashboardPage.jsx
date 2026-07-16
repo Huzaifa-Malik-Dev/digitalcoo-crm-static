@@ -1,7 +1,9 @@
-import { Stack, Title, SimpleGrid, Paper, Text, Group, RingProgress, Center, Badge, ScrollArea } from '@mantine/core';
+import { Stack, Title, SimpleGrid, Paper, Text, Group, RingProgress, Center, ScrollArea } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { fetchDashboardSummary } from '../../api/dashboard';
 import { useAuth } from '../../context/AuthContext';
+import PageToolbar from '../../components/PageToolbar';
+import Tag from '../../components/Tag';
 
 function AED(n) {
   return `AED ${Number(n || 0).toLocaleString()}`;
@@ -26,8 +28,10 @@ export default function DashboardPage() {
 
   return (
     <Stack>
-      <Title order={1} size="h3">Dashboard</Title>
-      <Text c="dimmed" size="sm">Welcome back, {user.name} — here's what's happening in your scope.</Text>
+      <PageToolbar
+        title={<Title order={1} size="h3">Dashboard</Title>}
+        subtitle={`Welcome back, ${user.name} — here's what's happening in your scope.`}
+      />
 
       {!isLoading && s && (
         <>
@@ -50,7 +54,7 @@ export default function DashboardPage() {
                 {Object.keys(s.pipeline.byStage).length === 0 && <Text c="dimmed" size="sm">No deals yet</Text>}
                 {Object.entries(s.pipeline.byStage).map(([stage, v]) => (
                   <Group key={stage} justify="space-between">
-                    <Badge variant="light">{stage}</Badge>
+                    <Tag>{stage}</Tag>
                     <Text size="sm">{v.count} deal{v.count === 1 ? '' : 's'} · {AED(v.value)}</Text>
                   </Group>
                 ))}
@@ -88,7 +92,7 @@ export default function DashboardPage() {
                 {Object.keys(s.orders.byStatus).length === 0 && <Text c="dimmed" size="sm">No orders yet</Text>}
                 {Object.entries(s.orders.byStatus).map(([status, v]) => (
                   <Group key={status} justify="space-between">
-                    <Badge variant="light">{status}</Badge>
+                    <Tag>{status}</Tag>
                     <Text size="sm">{v.count} · {AED(v.value)}</Text>
                   </Group>
                 ))}
