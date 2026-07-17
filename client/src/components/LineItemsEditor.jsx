@@ -1,6 +1,5 @@
 import { Stack, Paper, Group, Text, Select, NumberInput, Button, ActionIcon, Tooltip, SimpleGrid } from '@mantine/core';
 import { Plus, Trash2, X } from 'lucide-react';
-import { SR_TYPES, CATEGORIES } from '../constants/pipeline';
 
 function AED(n) {
   return `AED ${Number(n || 0).toLocaleString()}`;
@@ -69,11 +68,17 @@ export function validateLineItems(lineItems, path = 'lineItems') {
 // which is broken on this React 19 + Mantine 9.4.1 combination (renders to the DOM but stays
 // permanently height:0/display:none regardless of the `in` prop).
 //
+// Category, product and subscription type all come from the admin-managed catalog (Products page),
+// not a hardcoded list - so `categories` and `products` are passed in from whatever the page
+// fetched. A block's Subscription Type options are narrowed to the ones its chosen PRODUCT offers
+// (which the product's category in turn allows), so an impossible combination can't be picked.
+//
 // `savedLineItems` is the record as last saved, used only for the stale-value fallback: a block
-// saved under a category/product that's since been renamed or removed from the catalog must still
-// display, since Mantine's Select only renders a value present in its `data` and would otherwise
-// go blank - which reads as data loss rather than "not in the current catalog".
-export default function LineItemsEditor({ form, path = 'lineItems', products = [], savedLineItems = [], disabled = false }) {
+// saved under a category/product/type that's since been renamed, deactivated or removed from the
+// catalog must still display, since Mantine's Select only renders a value present in its `data`
+// and would otherwise go blank - which reads as data loss rather than "not in the current
+// catalog". The server applies the same tolerance on write (services/catalog.js).
+export default function LineItemsEditor({ form, path = 'lineItems', products = [], categories = [], savedLineItems = [], disabled = false }) {
   const blocks = form.values[path] || [];
   const total = totalMrc(blocks);
 
@@ -88,7 +93,11 @@ export default function LineItemsEditor({ form, path = 'lineItems', products = [
   const applyPricePreset = (i, patch) => {
     const block = { ...blocks[i], ...patch };
     if (!block.product || !block.sr) return;
-    const preset = products.find((p) => p.title === block.product)?.pricing?.find((pr) => pr.subscriptionType === block.sr);
+    // Line items carry catalog NAMES (a record of what was sold), while pricing is keyed by the
+    // subscription type's record - so the preset is matched by name.
+    const preset = products
+      .find((p) => p.title === block.product)
+      ?.pricing?.find((pr) => pr.subscriptionType?.name === block.sr);
     if (!preset) return;
     (block.rows || []).forEach((row, j) => {
       if (row.price === '' || row.price === 0) form.setFieldValue(`${path}.${i}.rows.${j}.price`, preset.defaultPrice);
@@ -117,10 +126,21 @@ export default function LineItemsEditor({ form, path = 'lineItems', products = [
 
       {blocks.map((block, i) => {
         const saved = savedLineItems?.[i];
-        const categoryOptions = saved?.cat && !CATEGORIES.includes(saved.cat) ? [...CATEGORIES, saved.cat] : CATEGORIES;
-        const productOptions = products.filter((p) => !block.cat || p.cat === block.cat).map((p) => p.title);
+        const categoryNames = categories.map((c) => c.name);
+        const categoryOptions = saved?.cat && !categoryNames.includes(saved.cat) ? [...categoryNames, saved.cat] : categoryNames;
+
+        const productsInCat = products.filter((p) => !block.cat || p.category?.name === block.cat);
+        const productOptions = productsInCat.map((p) => p.title);
         if (saved?.product && !productOptions.includes(saved.product)) productOptions.push(saved.product);
-        const srOptions = saved?.sr && !SR_TYPES.includes(saved.sr) ? [...SR_TYPES, saved.sr] : SR_TYPES;
+
+        // Only what the chosen product actually offers - which its category had to allow first.
+        // Before a product is picked there's nothing to narrow by, so fall back to the category's
+        // own list (and to every type if even that isn't chosen yet).
+        const chosenProduct = products.find((p) => p.title === block.product);
+        const chosenCategory = categories.find((c) => c.name === block.cat);
+        const srSource = chosenProduct?.subscriptionTypes || chosenCategory?.subscriptionTypes || [];
+        const srNames = srSource.map((t) => t.name);
+        const srOptions = saved?.sr && !srNames.includes(saved.sr) ? [...srNames, saved.sr] : srNames;
         const blockMrc = (block.rows || []).reduce((s, r) => s + (Number(r.price) || 0) * (Number(r.qty) || 0), 0);
 
         return (
@@ -161,7 +181,7 @@ export default function LineItemsEditor({ form, path = 'lineItems', products = [
                   form.setFieldValue(`${path}.${i}.cat`, v);
                   // The chosen product may not exist under the new category - clear it rather than
                   // leave a mismatched pair saved.
-                  if (block.product && !products.some((p) => p.title === block.product && p.cat === v)) {
+                  if (block.product && !products.some((p) => p.title === block.product && p.category?.name === v)) {
                     form.setFieldValue(`${path}.${i}.product`, '');
                   }
                 }}
@@ -175,6 +195,13 @@ export default function LineItemsEditor({ form, path = 'lineItems', products = [
                 {...form.getInputProps(`${path}.${i}.product`)}
                 onChange={(v) => {
                   form.setFieldValue(`${path}.${i}.product`, v);
+                  // Subscription types are per-product, so one already picked may not be on offer
+                  // for the new product - clear it rather than leave an unsellable pair saved.
+                  const nextOffers = products.find((p) => p.title === v)?.subscriptionTypes || [];
+                  if (block.sr && !nextOffers.some((t) => t.name === block.sr)) {
+                    form.setFieldValue(`${path}.${i}.sr`, '');
+                    return;
+                  }
                   applyPricePreset(i, { product: v });
                 }}
               />

@@ -13,6 +13,7 @@ import { usePagedList } from '../../hooks/usePagedList';
 import { useThreadUnreadCounts } from '../../hooks/useNotifications';
 import { fetchOrderList, updateOrderStatus, updateOrderLinked, updateOrder, sendOrderBack, createDirectOrder, fetchAssignableEmployees, requestOrderCancellation, exportOrders, importOrders } from '../../api/orders';
 import { fetchProducts } from '../../api/products';
+import { fetchCategories } from '../../api/catalog';
 import { markViewed } from '../../api/views';
 import { useAuth } from '../../context/AuthContext';
 import { useConfirm } from '../../context/ConfirmContext';
@@ -107,6 +108,8 @@ export default function BackofficePage() {
 
   const productsQuery = useQuery({ queryKey: ['products', 'options'], queryFn: () => fetchProducts({ limit: 200, active: true }) });
   const products = productsQuery.data?.data || [];
+  const categoriesQuery = useQuery({ queryKey: ['catalog', 'categories', 'active'], queryFn: () => fetchCategories({ active: true }) });
+  const categories = categoriesQuery.data?.data || [];
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ['orders'] });
@@ -650,6 +653,7 @@ export default function BackofficePage() {
             <LineItemsEditor
               form={editForm}
               products={products}
+              categories={categories}
               savedLineItems={editRow?.lineItems}
               disabled={!canEdit || modalLocked}
             />
@@ -681,7 +685,7 @@ export default function BackofficePage() {
               <TextInput label="Contract" {...createForm.getInputProps('contract')} />
             </SimpleGrid>
             <Divider label="Line Items" labelPosition="left" mt="xs" />
-            <LineItemsEditor form={createForm} products={products} />
+            <LineItemsEditor form={createForm} products={products} categories={categories} />
             <Textarea label="Remarks" {...createForm.getInputProps('remarks')} />
             <Button type="submit" mt="sm">Add Order</Button>
           </Stack>

@@ -9,6 +9,7 @@ import { notifications } from '../../utils/toast';
 import { Check, X, Send, AlertTriangle, Ban } from 'lucide-react';
 import { fetchPipelineOne, updatePipeline, escalateToTL, approvePipeline, rejectPipeline, requestPipelineCorrection, requestPipelineCancellation } from '../../api/pipeline';
 import { fetchProducts } from '../../api/products';
+import { fetchCategories } from '../../api/catalog';
 import { useAuth } from '../../context/AuthContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import { PIPE_STAGES, APPROVAL_INFO } from '../../constants/pipeline';
@@ -96,6 +97,8 @@ export default function PipelineDealPanel({ dealId }) {
 
   const productsQuery = useQuery({ queryKey: ['products', 'options'], queryFn: () => fetchProducts({ limit: 200, active: true }) });
   const products = productsQuery.data?.data || [];
+  const categoriesQuery = useQuery({ queryKey: ['catalog', 'categories', 'active'], queryFn: () => fetchCategories({ active: true }) });
+  const categories = categoriesQuery.data?.data || [];
 
   // Reason is mandatory only for a cancellation request (the server hard-rejects a blank one) -
   // optional for reject/correction, matching their own server-side rules.
@@ -274,6 +277,7 @@ export default function PipelineDealPanel({ dealId }) {
               <LineItemsEditor
                 form={editForm}
                 products={products}
+                categories={categories}
                 savedLineItems={deal.lineItems}
                 disabled={!canEditFields}
               />

@@ -1,15 +1,15 @@
 import { useMemo, useState } from 'react';
-import { Button, Group, Modal, Stack, TextInput, Select, ActionIcon, Tooltip } from '@mantine/core';
+import { Button, Group, Modal, Stack, TextInput, Select, MultiSelect, ActionIcon, Tooltip, Text, Alert } from '@mantine/core';
 import { useForm } from '@mantine/form';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { notifications } from '../../utils/toast';
-import { Plus, Pencil, Trash2, Power } from 'lucide-react';
+import { Plus, Pencil, Trash2, Power, Info } from 'lucide-react';
 import DataTable from '../../components/DataTable';
 import Tag from '../../components/Tag';
 import { usePagedList } from '../../hooks/usePagedList';
 import { fetchProducts, createProduct, updateProduct, deleteProduct } from '../../api/products';
+import { fetchCategories } from '../../api/catalog';
 import { useConfirm } from '../../context/ConfirmContext';
-import { CATEGORIES } from '../../constants/pipeline';
 
 export default function ProductsTab({ canEdit }) {
   const queryClient = useQueryClient();
@@ -18,14 +18,28 @@ export default function ProductsTab({ canEdit }) {
   const [editRow, setEditRow] = useState(null);
 
   const list = usePagedList(['products'], fetchProducts);
+  const { data: catData } = useQuery({ queryKey: ['catalog', 'categories'], queryFn: () => fetchCategories() });
+  const categories = catData?.data || [];
+  const activeCategories = categories.filter((c) => c.active);
 
+  const blank = { title: '', category: '', subscriptionTypes: [] };
   const form = useForm({
-    initialValues: { title: '', cat: '' },
+    initialValues: blank,
+    validate: { title: (v) => (v.trim() ? null : 'Title is required'), category: (v) => (v ? null : 'Category is required') },
+  });
+  const editForm = useForm({
+    initialValues: blank,
+    validate: { title: (v) => (v.trim() ? null : 'Title is required'), category: (v) => (v ? null : 'Category is required') },
   });
 
-  const editForm = useForm({
-    initialValues: { title: '', cat: '' },
-  });
+  // A product can only offer what its category allows, so the options come from the chosen
+  // category - not the full type list. The server enforces the same rule (productController).
+  const typeOptionsFor = (categoryId) => {
+    const cat = categories.find((c) => c._id === categoryId);
+    return (cat?.subscriptionTypes || []).map((t) => ({ value: t._id, label: t.name }));
+  };
+  const createTypeOptions = typeOptionsFor(form.values.category);
+  const editTypeOptions = typeOptionsFor(editForm.values.category);
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ['products'] });
@@ -36,14 +50,15 @@ export default function ProductsTab({ canEdit }) {
     setEditRow(row);
     editForm.setValues({
       title: row.title,
-      cat: row.cat,
+      category: row.category?._id || '',
+      subscriptionTypes: (row.subscriptionTypes || []).map((t) => t._id),
     });
   };
 
   const handleCreate = async (values) => {
     try {
       await createProduct(values);
-      notifications.show({ color: 'green', message: 'Product created' });
+      notifications.show({ color: 'green', message: `Product "${values.title}" added` });
       setCreateOpen(false);
       form.reset();
       refresh();
@@ -67,8 +82,8 @@ export default function ProductsTab({ canEdit }) {
     const ok = await confirm({
       title: row.active ? 'Deactivate product?' : 'Activate product?',
       message: row.active
-        ? `"${row.title}" will no longer be selectable when building new pipeline deals.`
-        : `"${row.title}" will become selectable again in pipeline deals.`,
+        ? `"${row.title}" will no longer be selectable when building new deals. Deals that already include it are unaffected.`
+        : `"${row.title}" will become selectable again in deals.`,
       confirmLabel: row.active ? 'Yes, deactivate' : 'Yes, activate',
       color: row.active ? 'red' : 'green',
     });
@@ -102,7 +117,29 @@ export default function ProductsTab({ canEdit }) {
   const columns = useMemo(
     () => [
       { accessorKey: 'title', header: 'Product' },
-      { accessorKey: 'cat', header: 'Category', cell: (info) => <Tag>{info.getValue()}</Tag> },
+      {
+        id: 'category',
+        header: 'Category',
+        enableSorting: false,
+        cell: (info) => {
+          const cat = info.row.original.category;
+          return cat ? <Tag color={cat.active ? 'blue' : 'gray'}>{cat.name}</Tag> : <Text size="xs" c="dimmed">—</Text>;
+        },
+      },
+      {
+        id: 'subscriptionTypes',
+        header: 'Subscription Types',
+        enableSorting: false,
+        cell: (info) => {
+          const types = info.row.original.subscriptionTypes || [];
+          if (!types.length) return <Text size="xs" c="dimmed">None — not sellable yet</Text>;
+          return (
+            <Group gap={4}>
+              {types.map((t) => <Tag key={t._id} size="xs" color={t.active ? 'cyan' : 'gray'}>{t.name}</Tag>)}
+            </Group>
+          );
+        },
+      },
       {
         accessorKey: 'active',
         header: 'Status',
@@ -139,15 +176,23 @@ export default function ProductsTab({ canEdit }) {
           ]
         : []),
     ],
-    [canEdit]
+    [canEdit, categories]
   );
+
+  const noCategories = !activeCategories.length;
 
   return (
     <Stack gap="md">
+      {noCategories && (
+        <Alert color="yellow" variant="light" icon={<Info size={16} />}>
+          There are no active categories yet. Add one on the Categories tab first — every product belongs to a category.
+        </Alert>
+      )}
+
       <Group justify="space-between">
         <div />
         {canEdit && (
-          <Button leftSection={<Plus size={16} />} onClick={() => setCreateOpen(true)}>
+          <Button leftSection={<Plus size={16} />} onClick={() => setCreateOpen(true)} disabled={noCategories}>
             Add Product
           </Button>
         )}
@@ -172,7 +217,30 @@ export default function ProductsTab({ canEdit }) {
         <form onSubmit={form.onSubmit(handleCreate)}>
           <Stack gap="sm">
             <TextInput label="Title" required {...form.getInputProps('title')} />
-            <Select label="Category" data={CATEGORIES} required {...form.getInputProps('cat')} />
+            <Select
+              label="Category"
+              data={activeCategories.map((c) => ({ value: c._id, label: c.name }))}
+              required
+              searchable
+              {...form.getInputProps('category')}
+              onChange={(v) => {
+                form.setFieldValue('category', v);
+                // Types are category-specific, so anything already picked may no longer be allowed.
+                form.setFieldValue('subscriptionTypes', []);
+              }}
+            />
+            <MultiSelect
+              label="Subscription types this product offers"
+              description={
+                form.values.category
+                  ? 'Only what the chosen category allows. Add more to the category to widen this.'
+                  : 'Pick a category first.'
+              }
+              data={createTypeOptions}
+              disabled={!form.values.category}
+              searchable
+              {...form.getInputProps('subscriptionTypes')}
+            />
             <Button type="submit" mt="sm">Save Product</Button>
           </Stack>
         </form>
@@ -182,13 +250,28 @@ export default function ProductsTab({ canEdit }) {
         <form onSubmit={editForm.onSubmit(handleEdit)}>
           <Stack gap="sm">
             <TextInput label="Title" required {...editForm.getInputProps('title')} />
-            {/* A product saved under a category that's since left the fixed CATEGORIES set must
-                still render rather than going blank - same stale-value pattern used for line items. */}
             <Select
               label="Category"
-              data={editRow?.cat && !CATEGORIES.includes(editRow.cat) ? [...CATEGORIES, editRow.cat] : CATEGORIES}
+              // A product sitting in a since-deactivated category must still show it rather than
+              // going blank - same stale-value pattern used across the app.
+              data={(editRow?.category && !activeCategories.some((c) => c._id === editRow.category._id)
+                ? [...activeCategories, editRow.category]
+                : activeCategories
+              ).map((c) => ({ value: c._id, label: c.name }))}
               required
-              {...editForm.getInputProps('cat')}
+              searchable
+              {...editForm.getInputProps('category')}
+              onChange={(v) => {
+                editForm.setFieldValue('category', v);
+                if (v !== editRow?.category?._id) editForm.setFieldValue('subscriptionTypes', []);
+              }}
+            />
+            <MultiSelect
+              label="Subscription types this product offers"
+              description="Only what its category allows. Removing one also drops its price preset."
+              data={editTypeOptions}
+              searchable
+              {...editForm.getInputProps('subscriptionTypes')}
             />
             <Button type="submit" mt="sm">Save changes</Button>
           </Stack>

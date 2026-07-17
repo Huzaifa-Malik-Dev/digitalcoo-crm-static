@@ -10,7 +10,8 @@ const {
   approveOrderCancellation,
   rejectOrderCancellation,
 } = require('../services/workflow');
-const { ORDER_STATUS, ETISALAT_STATUS, SR_TYPES, CATEGORIES, LINKED_STATUS } = require('../utils/constants');
+const { ORDER_STATUS, ETISALAT_STATUS, LINKED_STATUS } = require('../utils/constants');
+const { assertLineItemsInCatalog } = require('../services/catalog');
 const { recomputeLineItems } = require('../utils/lineItems');
 const { monthLabel } = require('../utils/dateLabels');
 const { sendXlsx, parseXlsxBuffer, cell } = require('../utils/importExport');
@@ -42,9 +43,9 @@ const reasonSchema = z.object({ reason: z.string().optional() });
 // (utils/lineItems.js), never accepted from the client.
 const lineItemsSchema = z.array(
   z.object({
-    cat: z.union([z.enum(CATEGORIES), z.literal('')]).optional().default(''),
+    cat: z.string().optional().default(''),
     product: z.string().optional().default(''),
-    sr: z.union([z.enum(SR_TYPES), z.literal('')]).optional().default(''),
+    sr: z.string().optional().default(''),
     rows: z
       .array(z.object({ price: z.number().min(0).optional().default(0), qty: z.number().min(1).optional().default(1) }))
       .min(1, 'Every line item needs at least one price/quantity row'),
@@ -233,6 +234,10 @@ async function update(req, res, next) {
       throw new AppError('This order is on hold pending a cancellation request — it must be approved or rejected before editing it', 400);
     }
 
+    // Same rule as Pipeline: validated against the live catalog, with the order's own saved
+    // values always allowed through. See services/catalog.js.
+    if (parsed.data.lineItems !== undefined) await assertLineItemsInCatalog(parsed.data.lineItems, order.lineItems);
+
     const before = {};
     Object.keys(ORDER_FIELD_LABELS).forEach((k) => { before[k] = order[k]; });
     const beforeLineItems = JSON.stringify(recomputeLineItems(order.lineItems).lineItems);
@@ -295,6 +300,7 @@ async function createDirect(req, res, next) {
 
     const agent = await User.findById(agentId);
     if (!agent) throw new AppError('Selected employee not found', 400);
+    await assertLineItemsInCatalog(fields.lineItems);
 
     const orderNo = await generateOrderNo();
     const chain = agent.managerChain || [];
@@ -422,8 +428,8 @@ const importRowSchema = z.object({
   email: z.string().optional(),
   pid: z.string().optional(),
   eOrderNo: z.string().optional(),
-  sr: z.preprocess((v) => (v === '' ? undefined : v), z.enum(SR_TYPES, { errorMap: () => ({ message: `SR must be one of: ${SR_TYPES.join(', ')}` }) }).optional()),
-  cat: z.preprocess((v) => (v === '' ? undefined : v), z.enum(CATEGORIES, { errorMap: () => ({ message: `Category must be one of: ${CATEGORIES.join(', ')}` }) }).optional()),
+  sr: z.string().optional(),
+  cat: z.string().optional(),
   product: z.string().optional(),
   contract: z.string().optional(),
   qty: z.number().min(1).optional(),

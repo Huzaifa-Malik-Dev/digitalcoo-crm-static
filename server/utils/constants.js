@@ -191,14 +191,6 @@ const NOT_CONNECTED_STATUSES = ['No answer', 'Voicemail', 'Number not in use', '
 // approval workflow, see APPROVAL_STATUS below).
 const PIPE_STAGES = ['10%- Prospect', '30% - Value Prop', '50% - Negotiation', '70% - Finalizing', '90% - Closing', '100% - Deal Won', '0% - Lost'];
 
-// Subscription Type on a Pipeline deal - a closed set, not free text (business rule). Now scoped
-// per line-item block (see models/schemas/lineItem.js) rather than once per whole deal.
-const SR_TYPES = ['NEW', 'MIG', 'MNP', 'FNP', 'ADD ON', 'P2P'];
-
-// Product/line-item category - a closed set matching the business's own reference sheet. Not a
-// separate collection (see models/Product.js) - just four fixed values, same treatment as
-// PIPE_STAGES/ORDER_STATUS below.
-const CATEGORIES = ['DIGITAL', 'FIXED', 'GSM', 'WIRELESS'];
 
 // The optional TL sign-off workflow - independent of the deal's sales-progress stage. An agent
 // can ask their TL to review/approve a deal at any point; reaching 100% also opens an order
@@ -275,8 +267,6 @@ module.exports = {
   CALL_STATUS,
   NOT_CONNECTED_STATUSES,
   PIPE_STAGES,
-  SR_TYPES,
-  CATEGORIES,
   APPROVAL_STATUS,
   PIPELINE_REQUIRED_FOR_APPROVAL,
   ORDER_STATUS,

@@ -4,7 +4,6 @@
 // per-model historyEntrySchema) because the two models must never drift on this shape and the
 // recompute rules are more than a one-liner - see utils/lineItems.js.
 const mongoose = require('mongoose');
-const { CATEGORIES, SR_TYPES } = require('../../utils/constants');
 
 const lineItemRowSchema = new mongoose.Schema({
   price: { type: Number, default: 0, min: 0 },
@@ -14,10 +13,18 @@ const lineItemRowSchema = new mongoose.Schema({
   mrc: { type: Number, default: 0 },
 });
 
+// cat/product/sr are stored as plain NAMES, and deliberately carry no enum: they're a record of
+// what was actually sold, not a live reference into the catalog (models/Category.js,
+// models/SubscriptionType.js). Two reasons this matters:
+//   - Mongoose validates the WHOLE document on every save, so an enum here would reject an
+//     existing deal the moment its category was renamed or retired - even for an unrelated edit
+//     like a price correction.
+//   - Renaming a category shouldn't silently rewrite what past deals say they sold.
+// Validation happens at write time instead, against the live catalog, in services/catalog.js.
 const lineItemBlockSchema = new mongoose.Schema({
-  cat: { type: String, enum: [...CATEGORIES, ''], default: '' },
+  cat: { type: String, default: '' },
   product: { type: String, default: '' },
-  sr: { type: String, enum: [...SR_TYPES, ''], default: '' },
+  sr: { type: String, default: '' },
   rows: { type: [lineItemRowSchema], default: () => [{ price: 0, qty: 1, mrc: 0 }] },
   // Sum of rows[].mrc - a convenience per-block subtotal recomputed alongside rows[].mrc so the
   // UI never has to re-derive it.

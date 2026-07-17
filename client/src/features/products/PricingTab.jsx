@@ -1,54 +1,57 @@
 import { useMemo, useState } from 'react';
 import { Group, Stack, NumberInput, Text, ActionIcon, Tooltip, Alert } from '@mantine/core';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { notifications } from '../../utils/toast';
 import { Check, Info } from 'lucide-react';
 import DataTable from '../../components/DataTable';
 import Tag from '../../components/Tag';
 import { usePagedList } from '../../hooks/usePagedList';
 import { fetchProducts, updateProduct } from '../../api/products';
-import { SR_TYPES } from '../../constants/pipeline';
+import { fetchSubscriptionTypes } from '../../api/catalog';
 
 function AED(n) {
   return `AED ${Number(n || 0).toLocaleString()}`;
 }
 
 // The default Unit Price for each (Product x Subscription Type) combination - what a deal's Unit
-// Price prefills to when that pair is picked in the line-item editor. Always still editable on the
-// deal itself; this is a starting point, not a locked rate.
+// Price prefills to when that pair is picked. Always still editable on the deal itself.
 //
-// Laid out as a flat grid (one row per product, one editable cell per subscription type) rather
-// than a modal-per-product: updating one rate is the common case, and SR_TYPES is a small fixed
-// set, so the whole matrix fits as columns. Edits are staged locally and saved per-row, so a typo
-// mid-edit doesn't fire a request on every keystroke.
+// Laid out as a grid, one column per subscription type, because updating one rate is the common
+// case and a modal per product would bury it. A cell only accepts a price where the product
+// actually offers that type (see ProductsTab) - the server rejects a price for anything else,
+// since nothing could ever select that combination.
 export default function PricingTab({ canEdit }) {
   const queryClient = useQueryClient();
   const list = usePagedList(['products'], fetchProducts);
-  // Keyed `${productId}:${subscriptionType}` -> price. Only holds cells the user has actually
-  // touched; everything else renders straight from the saved product.
+  const { data: typesData } = useQuery({ queryKey: ['catalog', 'subscription-types'], queryFn: () => fetchSubscriptionTypes() });
+  // Columns are the catalog itself now, so adding a subscription type adds a column here.
+  const types = (typesData?.data || []).filter((t) => t.active);
+
+  // Keyed `${productId}:${typeId}` -> price. Only holds cells the user has actually touched.
   const [pending, setPending] = useState({});
   const [saving, setSaving] = useState(null);
 
-  const priceOf = (row, sr) => {
-    const key = `${row._id}:${sr}`;
+  const offers = (row, typeId) => (row.subscriptionTypes || []).some((t) => t._id === typeId);
+  const priceOf = (row, typeId) => {
+    const key = `${row._id}:${typeId}`;
     if (key in pending) return pending[key];
-    return row.pricing?.find((p) => p.subscriptionType === sr)?.defaultPrice ?? '';
+    return row.pricing?.find((p) => p.subscriptionType?._id === typeId)?.defaultPrice ?? '';
   };
-
-  const isDirty = (row) => SR_TYPES.some((sr) => `${row._id}:${sr}` in pending);
+  const isDirty = (row) => types.some((t) => `${row._id}:${t._id}` in pending);
 
   const handleSave = async (row) => {
     setSaving(row._id);
     try {
-      // Merge the touched cells into the product's existing presets rather than replacing the
-      // array wholesale - editing one subscription type must never clear the others.
-      const pricing = SR_TYPES.map((sr) => ({ subscriptionType: sr, defaultPrice: Number(priceOf(row, sr)) || 0 })).filter(
-        (p) => p.defaultPrice > 0
-      );
+      // Only types the product offers can carry a price; a blank/zero clears the preset rather
+      // than storing a meaningless 0.
+      const pricing = types
+        .filter((t) => offers(row, t._id))
+        .map((t) => ({ subscriptionType: t._id, defaultPrice: Number(priceOf(row, t._id)) || 0 }))
+        .filter((p) => p.defaultPrice > 0);
       await updateProduct(row._id, { pricing });
       setPending((prev) => {
         const next = { ...prev };
-        SR_TYPES.forEach((sr) => delete next[`${row._id}:${sr}`]);
+        types.forEach((t) => delete next[`${row._id}:${t._id}`]);
         return next;
       });
       notifications.show({ color: 'green', message: `Pricing saved for "${row.title}"` });
@@ -64,15 +67,30 @@ export default function PricingTab({ canEdit }) {
   const columns = useMemo(
     () => [
       { accessorKey: 'title', header: 'Product' },
-      { accessorKey: 'cat', header: 'Category', cell: (info) => <Tag>{info.getValue()}</Tag> },
-      ...SR_TYPES.map((sr) => ({
-        id: `price-${sr}`,
-        header: sr,
+      {
+        id: 'category',
+        header: 'Category',
+        enableSorting: false,
+        cell: (info) => {
+          const cat = info.row.original.category;
+          return cat ? <Tag>{cat.name}</Tag> : <Text size="xs" c="dimmed">—</Text>;
+        },
+      },
+      ...types.map((type) => ({
+        id: `price-${type._id}`,
+        header: type.name,
         enableSorting: false,
         cell: (info) => {
           const row = info.row.original;
+          if (!offers(row, type._id)) {
+            return (
+              <Tooltip label={`"${row.title}" doesn't offer ${type.name}. Assign it on the Products tab first.`} multiline w={240}>
+                <Text size="sm" c="dimmed">—</Text>
+              </Tooltip>
+            );
+          }
           if (!canEdit) {
-            const v = priceOf(row, sr);
+            const v = priceOf(row, type._id);
             return v === '' ? <Text size="sm" c="dimmed">—</Text> : <Text size="sm">{AED(v)}</Text>;
           }
           return (
@@ -81,9 +99,9 @@ export default function PricingTab({ canEdit }) {
               w={110}
               min={0}
               placeholder="—"
-              value={priceOf(row, sr)}
-              onChange={(v) => setPending((prev) => ({ ...prev, [`${row._id}:${sr}`]: v }))}
-              aria-label={`${sr} price for ${row.title}`}
+              value={priceOf(row, type._id)}
+              onChange={(v) => setPending((prev) => ({ ...prev, [`${row._id}:${type._id}`]: v }))}
+              aria-label={`${type.name} price for ${row.title}`}
             />
           );
         },
@@ -116,16 +134,23 @@ export default function PricingTab({ canEdit }) {
           ]
         : []),
     ],
-    // `pending`/`saving` drive what each cell renders, so the columns must rebuild when they change.
-    [canEdit, pending, saving]
+    // types drives the columns themselves; pending/saving drive what each cell renders.
+    [canEdit, types, pending, saving]
   );
 
   return (
     <Stack gap="md">
       <Alert color="blue" variant="light" icon={<Info size={16} />}>
         These are default prices — when someone picks this product and subscription type on a deal, the Unit Price
-        starts here. They can always change it on the deal itself. Leave a cell blank for no default.
+        starts here and stays editable. A column only accepts a price where the product offers that type; assign
+        types on the Products tab. Leave a cell blank for no default.
       </Alert>
+
+      {!types.length && (
+        <Alert color="yellow" variant="light" icon={<Info size={16} />}>
+          No active subscription types yet — add some on the Subscription Types tab, then assign them to categories.
+        </Alert>
+      )}
 
       <DataTable
         columns={columns}

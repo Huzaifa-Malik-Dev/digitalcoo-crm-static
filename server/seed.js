@@ -20,6 +20,8 @@ const LedgerEntry = require('./models/LedgerEntry');
 const PayrollRun = require('./models/PayrollRun');
 const PayrollLine = require('./models/PayrollLine');
 const Product = require('./models/Product');
+const Category = require('./models/Category');
+const SubscriptionType = require('./models/SubscriptionType');
 const LeaveType = require('./models/LeaveType');
 const Holiday = require('./models/Holiday');
 const LeaveRequest = require('./models/LeaveRequest');
@@ -34,7 +36,7 @@ const { createLeaveRequest, approveLeaveRequest } = require('./services/leave');
 const { hashPassword } = require('./utils/password');
 const { buildManagerChain, createInitialAssignment } = require('./services/hierarchy');
 const { convertToPipeline, escalateToTL, tlApprove } = require('./services/workflow');
-const { PIPE_STAGES, SR_TYPES } = require('./utils/constants');
+const { PIPE_STAGES } = require('./utils/constants');
 const { ACCESS_DEFAULT, EDIT_ACCESS_DEFAULT, IMPORT_EXPORT_DEFAULT, CALL_STATUS } = require('./utils/constants');
 
 const defUser = (name) => name.toLowerCase().replace(/[^a-z]/g, '');
@@ -88,6 +90,8 @@ async function run() {
     // Wiped like everything else - these are (userId, module, recordId) rows, so leaving them
     // behind across a reseed strands them pointing at records that no longer exist.
     RecordView.deleteMany({}),
+    Category.deleteMany({}),
+    SubscriptionType.deleteMany({}),
     Pipeline.deleteMany({}),
     Order.deleteMany({}),
     Notification.deleteMany({}),
@@ -109,6 +113,29 @@ async function run() {
     Attendance.deleteMany({}),
     ActivityLog.deleteMany({}),
   ]);
+
+  console.log('Seeding subscription types + categories...');
+  // Categories and subscription types are admin-managed records now (Products > Categories /
+  // Subscription Types), not code constants - these are just the starting set the business
+  // already uses, and can be added to/renamed in the UI from here on.
+  const srTypeNames = ['NEW', 'MIG', 'MNP', 'FNP', 'ADD ON', 'P2P'];
+  const srTypes = await SubscriptionType.insertMany(srTypeNames.map((name) => ({ name, active: true })));
+  const srTypeByName = Object.fromEntries(srTypes.map((t) => [t.name, t._id]));
+
+  // Which subscription types each category actually allows - the whole point of assigning them per
+  // category. Number portability (MNP/FNP) only makes sense where there's a number to port, so it
+  // isn't offered on DIGITAL or WIRELESS.
+  const categoryDefs = [
+    { name: 'DIGITAL', types: ['NEW', 'MIG', 'ADD ON'] },
+    { name: 'FIXED', types: ['NEW', 'MIG', 'MNP', 'FNP', 'ADD ON', 'P2P'] },
+    { name: 'GSM', types: ['NEW', 'MIG', 'MNP', 'FNP', 'ADD ON'] },
+    { name: 'WIRELESS', types: ['NEW', 'MIG', 'ADD ON', 'P2P'] },
+  ];
+  const categories = await Category.insertMany(
+    categoryDefs.map((c) => ({ name: c.name, subscriptionTypes: c.types.map((t) => srTypeByName[t]), active: true }))
+  );
+  const categoryByName = Object.fromEntries(categories.map((c) => [c.name, c]));
+  const allowedTypesFor = (catName) => categoryDefs.find((c) => c.name === catName).types;
 
   console.log('Seeding permissions...');
   await Permission.create({
@@ -196,7 +223,10 @@ async function run() {
       dsr._id,
       {
         lineItems: [
-          { cat: pr.cat, product: pr.product, sr: SR_TYPES[i % SR_TYPES.length], rows: [{ price: pr.price, qty: 1 + (i % 4) }] },
+          // Pick a subscription type the deal's own category actually allows - cycling the full
+          // list blindly would seed impossible combinations (a DIGITAL deal sold as MNP), which
+          // the catalog rules would never let anyone create through the UI.
+          { cat: pr.cat, product: pr.product, sr: allowedTypesFor(pr.cat)[i % allowedTypesFor(pr.cat).length], rows: [{ price: pr.price, qty: 1 + (i % 4) }] },
         ],
         email: `${agent.username}@example.com`,
         remarks: 'Seed demo deal',
@@ -307,8 +337,6 @@ async function run() {
   });
 
   console.log('Seeding product catalog...');
-  // Categories are the fixed CATEGORIES set (utils/constants.js) - the old free-text 'Fixed' /
-  // 'Mobile' / 'Digital' values map onto FIXED / GSM / DIGITAL respectively.
   const catalog = [
     { cat: 'FIXED', title: 'Business Pro New', base: 400 },
     { cat: 'FIXED', title: 'Business Pro Mig', base: 380 },
@@ -352,12 +380,19 @@ async function run() {
   // maintained by admin in Products > Pricing.
   const PRESET_MULTIPLIER = { NEW: 1, MIG: 0.95, MNP: 0.9, FNP: 0.9, 'ADD ON': 0.5, P2P: 0.75 };
   await Product.insertMany(
-    catalog.map((p) => ({
-      cat: p.cat,
-      title: p.title,
-      pricing: SR_TYPES.map((sr) => ({ subscriptionType: sr, defaultPrice: Math.round(p.base * PRESET_MULTIPLIER[sr]) })),
-      active: true,
-    }))
+    catalog.map((p) => {
+      // Each product offers everything its category allows, and is priced for exactly those - a
+      // product can be narrowed further in the UI, but seeding the full set is the useful default.
+      const category = categoryByName[p.cat];
+      const offered = categoryDefs.find((c) => c.name === p.cat).types;
+      return {
+        title: p.title,
+        category: category._id,
+        subscriptionTypes: offered.map((t) => srTypeByName[t]),
+        pricing: offered.map((t) => ({ subscriptionType: srTypeByName[t], defaultPrice: Math.round(p.base * PRESET_MULTIPLIER[t]) })),
+        active: true,
+      };
+    })
   );
 
   console.log('Seeding leave types...');

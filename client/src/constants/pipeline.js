@@ -4,13 +4,6 @@
 
 export const PIPE_STAGES = ['10%- Prospect', '30% - Value Prop', '50% - Negotiation', '70% - Finalizing', '90% - Closing', '100% - Deal Won', '0% - Lost'];
 
-// Mirrors of the server's own SR_TYPES/CATEGORIES (server/utils/constants.js) - the server is the
-// source of truth and re-validates both on every write; these exist purely so the Selects can
-// render without a round-trip. Change one, change the other.
-export const SR_TYPES = ['NEW', 'MIG', 'MNP', 'FNP', 'ADD ON', 'P2P'];
-
-export const CATEGORIES = ['DIGITAL', 'FIXED', 'GSM', 'WIRELESS'];
-
 export const STAGE_COLOR = {
   '10%- Prospect': 'gray',
   '30% - Value Prop': 'blue',

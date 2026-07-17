@@ -15,7 +15,8 @@ const {
   requestOrderCorrection,
   requestOrderCancellation,
 } = require('../services/workflow');
-const { PIPE_STAGES, SR_TYPES, CATEGORIES } = require('../utils/constants');
+const { PIPE_STAGES } = require('../utils/constants');
+const { assertLineItemsInCatalog } = require('../services/catalog');
 const { recomputeLineItems } = require('../utils/lineItems');
 const { sendXlsx, parseXlsxBuffer, cell, resolveAgentFromRow } = require('../utils/importExport');
 const AppError = require('../utils/AppError');
@@ -32,9 +33,9 @@ const PIPELINE_FIELD_LABELS = {
 // (utils/lineItems.js), never accepted from the client.
 const lineItemsSchema = z.array(
   z.object({
-    cat: z.enum(CATEGORIES, { errorMap: () => ({ message: 'Category is required on every line item' }) }),
+    cat: z.string().trim().min(1, 'Category is required on every line item'),
     product: z.string().trim().min(1, 'Product is required on every line item'),
-    sr: z.enum(SR_TYPES, { errorMap: () => ({ message: 'Subscription Type is required on every line item' }) }),
+    sr: z.string().trim().min(1, 'Subscription Type is required on every line item'),
     rows: z
       .array(z.object({ price: z.number().positive('Unit Price is required on every row'), qty: z.number().min(1, 'Quantity is required on every row') }))
       .min(1, 'Every line item needs at least one price/quantity row'),
@@ -45,9 +46,9 @@ const lineItemsSchema = z.array(
 // created before its line items are known (the agent fills them in afterward).
 const draftLineItemsSchema = z.array(
   z.object({
-    cat: z.union([z.enum(CATEGORIES), z.literal('')]).optional().default(''),
+    cat: z.string().optional().default(''),
     product: z.string().optional().default(''),
-    sr: z.union([z.enum(SR_TYPES), z.literal('')]).optional().default(''),
+    sr: z.string().optional().default(''),
     rows: z.array(z.object({ price: z.number().min(0).optional().default(0), qty: z.number().min(1).optional().default(1) })).optional(),
   })
 );
@@ -215,6 +216,11 @@ async function update(req, res, next) {
     const adminOverride = isAdmin && pipeline.approval === 'approved';
 
     const fields = parsed.data;
+    // Validated here rather than by a schema enum: the catalog is admin-editable, and the deal's
+    // own saved values are always allowed through so a retired category can't block an unrelated
+    // edit to an old deal. See services/catalog.js.
+    await assertLineItemsInCatalog(fields.lineItems, pipeline.lineItems);
+
     const before = {};
     Object.keys(PIPELINE_FIELD_LABELS).forEach((k) => { before[k] = pipeline[k]; });
     const beforeLineItems = JSON.stringify(recomputeLineItems(pipeline.lineItems).lineItems);
@@ -367,9 +373,9 @@ const importRowSchema = z.object({
   contactNo: z.string().trim().min(1, 'Contact No is required'),
   email: z.string().optional().default(''),
   customer: z.string().optional().default(''),
-  cat: z.preprocess((v) => (v === '' ? undefined : v), z.enum(CATEGORIES, { errorMap: () => ({ message: `Category must be one of: ${CATEGORIES.join(', ')}` }) }).optional()),
+  cat: z.string().optional(),
   product: z.string().optional().default(''),
-  sr: z.preprocess((v) => (v === '' ? undefined : v), z.enum(SR_TYPES, { errorMap: () => ({ message: `SR must be one of: ${SR_TYPES.join(', ')}` }) }).optional()),
+  sr: z.string().optional(),
   price: z.number().min(0).optional().default(0),
   qty: z.number().min(1).optional().default(1),
   stage: z.enum(PIPE_STAGES, { errorMap: () => ({ message: `Stage must be one of: ${PIPE_STAGES.join(', ')}` }) }).optional().default('10%- Prospect'),

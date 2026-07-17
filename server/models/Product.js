@@ -1,9 +1,11 @@
 const mongoose = require('mongoose');
-const { CATEGORIES, SR_TYPES } = require('../utils/constants');
 
+// Pricing preset for one (this product x subscription type) pair - what a deal's Unit Price
+// prefills to when that combination is picked (see client/src/components/LineItemsEditor.jsx).
+// Always just a starting point: the price stays editable on the deal itself.
 const pricingEntrySchema = new mongoose.Schema(
   {
-    subscriptionType: { type: String, enum: SR_TYPES, required: true },
+    subscriptionType: { type: mongoose.Schema.Types.ObjectId, ref: 'SubscriptionType', required: true },
     defaultPrice: { type: Number, min: 0, default: 0 },
   },
   { _id: false }
@@ -12,28 +14,29 @@ const pricingEntrySchema = new mongoose.Schema(
 const productSchema = new mongoose.Schema(
   {
     title: { type: String, required: true },
-    cat: { type: String, enum: CATEGORIES, required: true },
-    // One optional preset per subscription type this product supports - a type absent here just
-    // means "no preset". The Subscription Type Select in Pipeline/Back Office still always offers
-    // every SR_TYPES value regardless of product; only the Unit Price prefill is affected (see
-    // client/src/components/LineItemsEditor.jsx), and it always stays user-editable either way.
+    // A real reference now, not free text - a category rename follows through to its products
+    // automatically. (Deals keep the name they were sold under instead; see schemas/lineItem.js.)
+    category: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', required: true },
+    // Which of the category's assignable subscription types THIS product actually offers - always
+    // a subset of category.subscriptionTypes, enforced in productController. Empty means the
+    // product offers none yet and won't be sellable until one is assigned.
+    subscriptionTypes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'SubscriptionType' }],
     pricing: { type: [pricingEntrySchema], default: [] },
     active: { type: Boolean, default: true },
   },
   { timestamps: true }
 );
 
-productSchema.index({ cat: 1 });
+productSchema.index({ category: 1 });
 productSchema.index({ active: 1 });
 
-// Defense in depth alongside the Zod-level uniqueness check in productController.js.
+// Defense in depth alongside productController's own Zod-level uniqueness check.
 productSchema.pre('validate', function enforceUniquePricingTypes(next) {
   const seen = new Set();
   for (const entry of this.pricing) {
-    if (seen.has(entry.subscriptionType)) {
-      return next(new Error(`Duplicate pricing entry for subscription type "${entry.subscriptionType}"`));
-    }
-    seen.add(entry.subscriptionType);
+    const key = String(entry.subscriptionType);
+    if (seen.has(key)) return next(new Error('Each subscription type can only have one price preset'));
+    seen.add(key);
   }
   next();
 });
